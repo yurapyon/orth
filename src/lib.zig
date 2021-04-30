@@ -7,6 +7,9 @@ const StringHashMap = std.StringHashMap;
 
 //;
 
+// center of the design should be contexts and envs
+//  able to parse into an env
+
 // TODO multiline strings
 
 // TODO certain things cant be symbols
@@ -158,12 +161,97 @@ pub const Tokenizer = struct {
     }
 };
 
-// parse ===
+//;
 
-// things that can be in code
-//   symbols, strings, and words are interned into string_table
-//   builtins are interned into builtin_table
-// TODO intern quotations ??
+pub fn Stack_(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        pub const Error = error{
+            StackOverflow,
+            StackUnderflow,
+        } || Allocator.Error;
+
+        data: ArrayList(Value),
+
+        pub fn init(allocator: *Allocator) Self {
+            return .{
+                .data = ArrayList(Value).init(allocator),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            // TODO free values
+            self.data.deinit();
+        }
+
+        pub fn push(self: *Self, val: Value) Error!void {
+            try self.data.append(val);
+        }
+
+        pub fn pop(self: *Self) Error!Value {
+            if (self.data.items.len == 0) {
+                return Error.StackUnderflow;
+            }
+            var ret = self.data.items[self.data.items.len - 1];
+            self.data.items.len -= 1;
+            return ret;
+        }
+
+        pub fn peek(self: *Self) Error!Value {
+            var ret = self.data.items[self.data.items.len - 1];
+            return ret;
+        }
+    };
+}
+
+// use a locals stack?
+
+// could have the environment be a stack
+//  each value is tagged with a name
+
+pub const LocalEnvItem = struct {
+    name: usize,
+    value: Value,
+};
+
+// main virtual machine
+pub const Context_ = struct {
+    stack: Stack,
+    locals: ArrayList(LocalEnvItem),
+    envs: ArrayList(Env),
+    string_table: ArrayList([]u8),
+    builtin_table: ArrayList(Builtin),
+};
+
+// compilation unit
+pub const Env_ = struct {
+    name: []u8,
+    table: AutoHashMap(usize, Value),
+};
+
+pub const Value_ = union(enum) {
+    Int: i32,
+    Float: f32,
+    Boolean: bool,
+    Symbol: usize,
+    Builtin: usize,
+
+    // Array: ArrayList(Value),
+    // String: ArrayList(u8),
+    Quotation: ArrayList(Literal),
+    // Record: Record,
+
+    Env: Env,
+};
+
+// parse ===
+// symbols, strings, and words are interned into string_table
+// builtins are interned into builtin_table
+
+// interning is for speed of comparisons and less memory usage
+//   so interning quotations isnt necessary
+
 pub const Literal = union(enum) {
     Int: i32,
     Float: f32,
@@ -331,7 +419,17 @@ pub const Builtin = struct {
     func: fn (ctx: *Context) Evaluator.Error!void,
 };
 
-// things that can be on the stack
+pub const Record = struct {
+    type_id: usize,
+    slots: ArrayList(Value),
+};
+
+pub const RecordDef = struct {
+    type_name: usize,
+    slot_ct: usize,
+};
+
+// TODO userdata
 pub const Value = union(enum) {
     Int: i32,
     Float: f32,
@@ -342,6 +440,7 @@ pub const Value = union(enum) {
     // Array: ArrayList(Value),
     // String: ArrayList(u8),
     Quotation: ArrayList(Literal),
+    Record: Record,
 
     // Env: Env,
 };
@@ -379,6 +478,11 @@ pub const Stack = struct {
         self.data.items.len -= 1;
         return ret;
     }
+
+    pub fn peek(self: *Self) Error!Value {
+        var ret = self.data.items[self.data.items.len - 1];
+        return ret;
+    }
 };
 
 pub const Env = struct {
@@ -407,7 +511,7 @@ pub const Env = struct {
 };
 
 // TODO have a way to intern strings and builtins at runtime?
-//        probably not necessary for now
+//        for adding more words or builtins from other files you need this
 // TODO keep quotation_level in context?
 pub const Context = struct {
     const Self = @This();
@@ -429,6 +533,13 @@ pub const Context = struct {
             .stack = Stack.init(allocator),
         };
     }
+
+    pub fn deinit(self: *Self) void {
+        self.stack.deinit();
+        self.global_env.deinit();
+    }
+
+    // fn defineRecord() void{}
 };
 
 pub const Evaluator = struct {
@@ -478,6 +589,7 @@ pub const Evaluator = struct {
                     quotation_level -= 1;
                     if (quotation_level == 0) {
                         try ctx.stack.push(.{ .Quotation = quotation_buf });
+                        continue;
                     }
                 },
                 else => {},
@@ -520,6 +632,7 @@ pub const Evaluator = struct {
                     try ctx.builtin_table[idx].func(ctx);
                 },
                 .QuoteOpen, .QuoteClose => {
+                    std.log.info("really?", .{});
                     return Error.InternalError;
                 },
             }

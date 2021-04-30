@@ -1,0 +1,4 @@
+{
+  :x get
+  :y get-set
+} :point @record
