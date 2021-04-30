@@ -10,10 +10,39 @@ const StringHashMap = std.StringHashMap;
 // center of the design should be contexts and envs
 //  able to parse into an env
 
-// TODO multiline strings
-
 // TODO certain things cant be symbols
 //   because symbols are what you use to name functions and stuff
+
+// errors ===
+
+pub const error_info = struct {
+    var line_num: usize = undefined;
+
+    pub fn lineNumber() usize {
+        return line_num;
+    }
+};
+
+pub const TokenizeError = error{
+    InvalidString,
+    InvalidWord,
+} || Allocator.Error;
+
+pub const ParseError = error{InvalidSymbol} || Allocator.Error;
+
+pub const StackError = error{
+    StackOverflow,
+    StackUnderflow,
+    OutOfBounds,
+} || Allocator.Error;
+
+pub const EvalError = error{
+    WordNotFound,
+    QuotationUnderflow,
+    TypeError,
+    Panic,
+    InternalError,
+} || StackError || Allocator.Error;
 
 // tokenize ===
 
@@ -36,452 +65,229 @@ pub fn charIsWordValid(ch: u8) bool {
     return ch != '"';
 }
 
-// note: tokenizer doesnt copy strings
-pub const Tokenizer = struct {
-    const Self = @This();
+// TODO can probably have multiline strings
+//        just have to do the thing where leading spaces are removed
+//  "hello
+//   world" should just be "hello\nworld"
+// TODO string escaping
 
-    pub const Error = error{
-        InvalidString,
-        InvalidWord,
-    } || Allocator.Error;
+// TODO { and } cant be in words
+//  example: {}
 
-    pub const ErrorInfo = struct {
-        err: Error,
-        line_num: usize,
+pub fn tokenize(allocator: *Allocator, input: []const u8) TokenizeError!ArrayList(Token) {
+    const State = enum {
+        Empty,
+        InComment,
+        InString,
+        InWord,
     };
 
-    error_info: ErrorInfo,
+    var state: State = .Empty;
+    var start: usize = 0;
+    var end: usize = 0;
 
-    pub fn init() Self {
-        return .{
-            .error_info = undefined,
-        };
-    }
+    var ret = ArrayList(Token).init(allocator);
+    var line_num: usize = 1;
 
-    pub fn tokenize(
-        self: *Self,
-        allocator: *Allocator,
-        input: []const u8,
-    ) Error!ArrayList(Token) {
-        const State = enum {
-            Empty,
-            InComment,
-            InString,
-            InWord,
-        };
-
-        var state: State = .Empty;
-        var start: usize = 0;
-        var end: usize = 0;
-
-        var ret = ArrayList(Token).init(allocator);
-        var line_num: usize = 1;
-
-        for (input) |ch, i| {
-            // TODO where to put this so line numbers are properly reported
-            //   if \n causes the error
-            if (ch == '\n') {
-                line_num += 1;
-            }
-
-            switch (state) {
-                .Empty => {
-                    if (ascii.isSpace(ch)) {
-                        continue;
-                    }
-                    state = switch (ch) {
-                        ';' => .InComment,
-                        '"' => .InString,
-                        else => .InWord,
-                    };
-                    start = i;
-                    end = start;
-                },
-                .InComment => {
-                    if (ch == '\n') {
-                        state = .Empty;
-                    }
-                },
-                .InString => {
-                    if (ch == '"') {
-                        try ret.append(.{
-                            .ty = .String,
-                            .str = input[(start + 1)..(end + 1)],
-                        });
-                        state = .Empty;
-                        continue;
-                    } else if (ch == '\n') {
-                        self.error_info = .{
-                            .err = Error.InvalidString,
-                            .line_num = line_num,
-                        };
-                        return self.error_info.err;
-                    }
-                    end += 1;
-                },
-                .InWord => {
-                    if (charIsDelimiter(ch)) {
-                        try ret.append(.{
-                            .ty = .Word,
-                            .str = input[start..(end + 1)],
-                        });
-                        state = .Empty;
-                        continue;
-                    } else if (!charIsWordValid(ch)) {
-                        self.error_info = .{
-                            .err = Error.InvalidWord,
-                            .line_num = line_num,
-                        };
-                        return self.error_info.err;
-                    }
-
-                    end += 1;
-                },
-            }
+    for (input) |ch, i| {
+        // TODO where to put this so line numbers are properly reported
+        //   if \n causes the error
+        if (ch == '\n') {
+            line_num += 1;
         }
 
         switch (state) {
-            .InString => {
-                self.error_info = .{
-                    .err = Error.InvalidString,
-                    .line_num = line_num,
+            .Empty => {
+                if (ascii.isSpace(ch)) {
+                    continue;
+                }
+                state = switch (ch) {
+                    ';' => .InComment,
+                    '"' => .InString,
+                    else => .InWord,
                 };
-                return self.error_info.err;
+                start = i;
+                end = start;
+            },
+            .InComment => {
+                if (ch == '\n') {
+                    state = .Empty;
+                }
+            },
+            .InString => {
+                if (ch == '"') {
+                    try ret.append(.{
+                        .ty = .String,
+                        .str = input[(start + 1)..(end + 1)],
+                    });
+                    state = .Empty;
+                    continue;
+                } else if (ch == '\n') {
+                    error_info.line_num = line_num;
+                    return error.InvalidString;
+                }
+                end += 1;
             },
             .InWord => {
-                try ret.append(.{
-                    .ty = .Word,
-                    .str = input[start..(end + 1)],
-                });
-            },
-            else => {},
-        }
+                if (charIsDelimiter(ch)) {
+                    try ret.append(.{
+                        .ty = .Word,
+                        .str = input[start..(end + 1)],
+                    });
+                    state = .Empty;
+                    continue;
+                } else if (!charIsWordValid(ch)) {
+                    error_info.line_num = line_num;
+                    return error.InvalidWord;
+                }
 
-        return ret;
+                end += 1;
+            },
+        }
     }
-};
+
+    switch (state) {
+        .InString => {
+            error_info.line_num = line_num;
+            return error.InvalidString;
+        },
+        .InWord => {
+            try ret.append(.{
+                .ty = .Word,
+                .str = input[start..(end + 1)],
+            });
+        },
+        else => {},
+    }
+
+    return ret;
+}
 
 //;
 
-pub fn Stack_(comptime T: type) type {
+// TODO have a "fixed stack" that can overflow?
+pub fn Stack(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        pub const Error = error{
-            StackOverflow,
-            StackUnderflow,
-        } || Allocator.Error;
-
-        data: ArrayList(Value),
+        data: ArrayList(T),
 
         pub fn init(allocator: *Allocator) Self {
             return .{
-                .data = ArrayList(Value).init(allocator),
+                .data = ArrayList(T).init(allocator),
             };
         }
 
         pub fn deinit(self: *Self) void {
-            // TODO free values
             self.data.deinit();
         }
 
-        pub fn push(self: *Self, val: Value) Error!void {
-            try self.data.append(val);
+        //;
+
+        pub fn push(self: *Self, obj: T) Allocator.Error!void {
+            try self.data.append(obj);
         }
 
-        pub fn pop(self: *Self) Error!Value {
+        pub fn pop(self: *Self) StackError!T {
             if (self.data.items.len == 0) {
-                return Error.StackUnderflow;
+                return error.StackUnderflow;
             }
-            var ret = self.data.items[self.data.items.len - 1];
+            const ret = self.data.items[self.data.items.len - 1];
             self.data.items.len -= 1;
             return ret;
         }
 
-        pub fn peek(self: *Self) Error!Value {
-            var ret = self.data.items[self.data.items.len - 1];
-            return ret;
+        pub fn peek(self: *Self) StackError!T {
+            return (try self.index(0)).*;
+        }
+
+        pub fn index(self: *Self, idx: usize) StackError!*T {
+            if (idx >= self.data.items.len) {
+                return error.OutOfBounds;
+            }
+            return &self.data.items[self.data.items.len - idx - 1];
+        }
+
+        pub fn clear(self: *Self) void {
+            self.data.items.len = 0;
         }
     };
 }
-
-// use a locals stack?
-
-// could have the environment be a stack
-//  each value is tagged with a name
-
-pub const LocalEnvItem = struct {
-    name: usize,
-    value: Value,
-};
-
-// main virtual machine
-pub const Context_ = struct {
-    stack: Stack,
-    locals: ArrayList(LocalEnvItem),
-    envs: ArrayList(Env),
-    string_table: ArrayList([]u8),
-    builtin_table: ArrayList(Builtin),
-};
-
-// compilation unit
-pub const Env_ = struct {
-    name: []u8,
-    table: AutoHashMap(usize, Value),
-};
-
-pub const Value_ = union(enum) {
-    Int: i32,
-    Float: f32,
-    Boolean: bool,
-    Symbol: usize,
-    Builtin: usize,
-
-    // Array: ArrayList(Value),
-    // String: ArrayList(u8),
-    Quotation: ArrayList(Literal),
-    // Record: Record,
-
-    Env: Env,
-};
-
-// parse ===
-// symbols, strings, and words are interned into string_table
-// builtins are interned into builtin_table
-
-// interning is for speed of comparisons and less memory usage
-//   so interning quotations isnt necessary
 
 pub const Literal = union(enum) {
     Int: i32,
     Float: f32,
     Boolean: bool,
-    Symbol: usize,
     String: usize,
     Word: usize,
-    Builtin: usize,
+    Symbol: usize,
     QuoteOpen,
     QuoteClose,
 };
 
-pub const ParseResult = struct {
-    const Self = @This();
+pub const ForeignFn = fn (vm: *VM) EvalError!void;
 
-    literals: ArrayList(Literal),
-    string_table: ArrayList([]const u8),
-    builtin_table: ArrayList(Builtin),
+// TODO could use reference counting for memory management
+//  being on the stack or in an env counts as a reference
 
-    pub fn init(allocator: *Allocator) Self {
-        return .{
-            .literals = ArrayList(Literal).init(allocator),
-            .string_table = ArrayList([]const u8).init(allocator),
-            .builtin_table = ArrayList(Builtin).init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.builtin_table.deinit();
-        self.string_table.deinit();
-        self.literals.deinit();
-    }
-};
-
-// note: parser doesnt copy strings
-pub const Parser = struct {
-    const Self = @This();
-
-    pub const Error = error{InvalidSymbol} || Allocator.Error;
-
-    pub const ErrorInfo = struct {
-        err: Error,
-        line_num: usize,
-    };
-
-    error_info: ErrorInfo,
-
-    pub fn init() Self {
-        return .{
-            .error_info = undefined,
-        };
-    }
-
-    // TODO handle memory management in the event of errors
-    // TODO different float parser
-    // specialized parseInt that can parse hex like 0x0ff0
-    pub fn parse(
-        self: *Self,
-        allocator: *Allocator,
-        tokens: []const Token,
-        builtins: []const Builtin,
-    ) Error!ParseResult {
-        var ret = ParseResult.init(allocator);
-
-        for (tokens) |token| {
-            switch (token.ty) {
-                .String => {
-                    var is_interned = false;
-                    for (ret.string_table.items) |str, i| {
-                        if (std.mem.eql(u8, token.str, str)) {
-                            try ret.literals.append(.{ .String = i });
-                            is_interned = true;
-                        }
-                    }
-                    if (!is_interned) {
-                        try ret.literals.append(.{ .String = ret.string_table.items.len });
-                        try ret.string_table.append(token.str);
-                    }
-                },
-                .Word => {
-                    var try_parse_float =
-                        !std.mem.eql(u8, token.str, "+") and
-                        !std.mem.eql(u8, token.str, "-") and
-                        !std.mem.eql(u8, token.str, ".");
-                    const fl = std.fmt.parseFloat(f32, token.str) catch null;
-
-                    var found_builtin: ?Builtin = null;
-                    for (builtins) |bi| {
-                        if (std.mem.eql(u8, token.str, bi.name)) {
-                            found_builtin = bi;
-                        }
-                    }
-
-                    if (token.str[0] == ':') {
-                        if (token.str.len == 1) {
-                            self.error_info = .{
-                                .err = Error.InvalidSymbol,
-                                .line_num = 0,
-                            };
-                            return self.error_info.err;
-                        } else {
-                            const name = token.str[1..];
-
-                            var is_interned = false;
-                            for (ret.string_table.items) |str, i| {
-                                if (std.mem.eql(u8, name, str)) {
-                                    try ret.literals.append(.{ .Symbol = i });
-                                    is_interned = true;
-                                }
-                            }
-                            if (!is_interned) {
-                                try ret.literals.append(.{ .Symbol = ret.string_table.items.len });
-                                try ret.string_table.append(token.str[1..]);
-                            }
-                        }
-                    } else if (std.fmt.parseInt(i32, token.str, 10) catch null) |i| {
-                        try ret.literals.append(.{ .Int = i });
-                    } else if (try_parse_float and (fl != null)) {
-                        try ret.literals.append(.{ .Float = fl.? });
-                    } else if (std.mem.eql(u8, token.str, "#t")) {
-                        try ret.literals.append(.{ .Boolean = true });
-                    } else if (std.mem.eql(u8, token.str, "#f")) {
-                        try ret.literals.append(.{ .Boolean = false });
-                    } else if (std.mem.eql(u8, token.str, "{")) {
-                        try ret.literals.append(.{ .QuoteOpen = {} });
-                    } else if (std.mem.eql(u8, token.str, "}")) {
-                        try ret.literals.append(.{ .QuoteClose = {} });
-                    } else if (found_builtin != null) {
-                        var is_interned = false;
-                        for (ret.builtin_table.items) |bi, i| {
-                            if (std.mem.eql(u8, token.str, bi.name)) {
-                                try ret.literals.append(.{ .Builtin = i });
-                                is_interned = true;
-                            }
-                        }
-                        if (!is_interned) {
-                            try ret.literals.append(.{ .Builtin = ret.builtin_table.items.len });
-                            try ret.builtin_table.append(found_builtin.?);
-                        }
-                    } else {
-                        var is_interned = false;
-                        for (ret.string_table.items) |str, i| {
-                            if (std.mem.eql(u8, token.str, str)) {
-                                try ret.literals.append(.{ .Word = i });
-                                is_interned = true;
-                            }
-                        }
-                        if (!is_interned) {
-                            try ret.literals.append(.{ .Word = ret.string_table.items.len });
-                            try ret.string_table.append(token.str);
-                        }
-                    }
-                },
-            }
-        }
-
-        return ret;
-    }
-};
-
-// evaluate ===
-
-pub const Builtin = struct {
-    name: []const u8,
-    func: fn (ctx: *Context) Evaluator.Error!void,
-};
-
-pub const Record = struct {
-    type_id: usize,
-    slots: ArrayList(Value),
-};
-
-pub const RecordDef = struct {
-    type_name: usize,
-    slot_ct: usize,
-};
-
-// TODO userdata
+// TODO
+//   values should not have to be 'cloned'
+//     they should all be pointers if they have data somewhere
 pub const Value = union(enum) {
+    const Self = @This();
+
     Int: i32,
     Float: f32,
     Boolean: bool,
     Symbol: usize,
-    Builtin: usize,
+    ForeignFn: ForeignFn,
+    Vec: *ArrayList(Value),
 
-    // Array: ArrayList(Value),
     // String: ArrayList(u8),
+    // TODO make this a *ArrayList
     Quotation: ArrayList(Literal),
-    Record: Record,
+    // Record: Record,
 
     // Env: Env,
-};
 
-pub const Stack = struct {
-    const Self = @This();
-
-    pub const Error = error{
-        StackOverflow,
-        StackUnderflow,
-    } || Allocator.Error;
-
-    data: ArrayList(Value),
-
-    pub fn init(allocator: *Allocator) Self {
-        return .{
-            .data = ArrayList(Value).init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        // TODO free values
-        self.data.deinit();
-    }
-
-    pub fn push(self: *Self, val: Value) Error!void {
-        try self.data.append(val);
-    }
-
-    pub fn pop(self: *Self) Error!Value {
-        if (self.data.items.len == 0) {
-            return Error.StackUnderflow;
+    pub fn equals(self: Self, other: Self) bool {
+        if (@as(@TagType(Self), self) == @as(@TagType(Self), other)) {
+            return switch (self) {
+                .Int => |val| val == other.Int,
+                .Float => |val| val == other.Float,
+                .Boolean => |val| val == other.Boolean,
+                .Symbol => |val| val == other.Symbol,
+                .ForeignFn => |val| val == other.ForeignFn,
+                .Vec => false,
+                .Quotation => false,
+            };
+        } else {
+            return false;
         }
-        var ret = self.data.items[self.data.items.len - 1];
-        self.data.items.len -= 1;
-        return ret;
     }
 
-    pub fn peek(self: *Self) Error!Value {
-        var ret = self.data.items[self.data.items.len - 1];
-        return ret;
+    // TODO dont print, return a string
+    pub fn nicePrint(self: Self, string_table: []const []const u8) void {
+        switch (self) {
+            .Int => |val| std.debug.print("{}", .{val}),
+            .Float => |val| std.debug.print("{}", .{val}),
+            .Boolean => |val| {
+                const str = if (val) "#t" else "#f";
+                std.debug.print("{s} ", .{str});
+            },
+            .Symbol => |val| std.debug.print(":{}", .{string_table[val]}),
+            .Vec => |val| {
+                std.debug.print("[ ", .{});
+                for (val.items) |v| {
+                    v.nicePrint(string_table);
+                    std.debug.print(" ", .{});
+                }
+                std.debug.print("]", .{});
+            },
+            // TODO
+            .ForeignFn => |val| std.debug.print("{}", .{val}),
+            .Quotation => |val| std.debug.print("{}", .{val}),
+        }
     }
 };
 
@@ -510,68 +316,126 @@ pub const Env = struct {
     }
 };
 
-// TODO have a way to intern strings and builtins at runtime?
-//        for adding more words or builtins from other files you need this
-// TODO keep quotation_level in context?
-pub const Context = struct {
+pub const Local = struct {
+    name: usize,
+    value: Value,
+};
+
+// main virtual machine
+pub const VM = struct {
     const Self = @This();
 
-    string_table: [][]const u8,
-    builtin_table: []Builtin,
-    global_env: Env,
-    stack: Stack,
+    allocator: *Allocator,
 
-    pub fn init(
-        allocator: *Allocator,
-        string_table: [][]const u8,
-        builtin_table: []Builtin,
-    ) Self {
-        return .{
-            .string_table = string_table,
-            .builtin_table = builtin_table,
-            .global_env = Env.init(allocator),
-            .stack = Stack.init(allocator),
+    // parse
+    string_table: ArrayList([]const u8),
+
+    // eval
+    stack: Stack(Value),
+    locals: Stack(Local),
+    envs: Stack(Env),
+
+    pub fn init(allocator: *Allocator) Allocator.Error!Self {
+        var ret = .{
+            .allocator = allocator,
+            .string_table = ArrayList([]const u8).init(allocator),
+            .stack = Stack(Value).init(allocator),
+            .locals = Stack(Local).init(allocator),
+            .envs = Stack(Env).init(allocator),
         };
+        try ret.envs.push(Env.init(allocator));
+        return ret;
     }
 
     pub fn deinit(self: *Self) void {
+        for (self.envs.data.items) |env| {
+            env.deinit();
+        }
+        self.envs.deinit();
+        self.locals.deinit();
         self.stack.deinit();
-        self.global_env.deinit();
+        self.string_table.deinit();
     }
 
-    // fn defineRecord() void{}
-};
+    //;
 
-pub const Evaluator = struct {
-    const Self = @This();
+    pub fn internString(self: *Self, str: []const u8) Allocator.Error!usize {
+        for (self.string_table.items) |st_str, i| {
+            if (std.mem.eql(u8, str, st_str)) {
+                return i;
+            }
+        }
 
-    pub const Error = error{
-        WordNotFound,
-        QuotationUnderflow,
-        InternalError,
-    } || Stack.Error || Allocator.Error;
-
-    pub const ErrorInfo = struct {
-        err: Error,
-        line_num: usize,
-    };
-
-    error_info: ErrorInfo,
-
-    pub fn init() Self {
-        return .{
-            .error_info = undefined,
-        };
+        // TODO copy strings on interning
+        const idx = self.string_table.items.len;
+        try self.string_table.append(str);
+        return idx;
     }
 
-    pub fn evaluate(
-        self: *Self,
-        allocator: *Allocator,
-        literals: []const Literal,
-        ctx: *Context,
-    ) Error!void {
+    pub fn parse(self: *Self, tokens: []const Token) ParseError!ArrayList(Literal) {
+        var ret = ArrayList(Literal).init(self.allocator);
+
+        for (tokens) |token| {
+            switch (token.ty) {
+                .String => {
+                    try ret.append(.{ .String = try self.internString(token.str) });
+                },
+                .Word => {
+                    var try_parse_float =
+                        !std.mem.eql(u8, token.str, "+") and
+                        !std.mem.eql(u8, token.str, "-") and
+                        !std.mem.eql(u8, token.str, ".");
+                    const fl = std.fmt.parseFloat(f32, token.str) catch null;
+
+                    if (token.str[0] == ':') {
+                        if (token.str.len == 1) {
+                            error_info.line_num = 0;
+                            return error.InvalidSymbol;
+                        } else {
+                            try ret.append(.{ .Symbol = try self.internString(token.str[1..]) });
+                        }
+                    } else if (std.fmt.parseInt(i32, token.str, 10) catch null) |i| {
+                        try ret.append(.{ .Int = i });
+                    } else if (try_parse_float and (fl != null)) {
+                        try ret.append(.{ .Float = fl.? });
+                    } else if (std.mem.eql(u8, token.str, "#t")) {
+                        try ret.append(.{ .Boolean = true });
+                    } else if (std.mem.eql(u8, token.str, "#f")) {
+                        try ret.append(.{ .Boolean = false });
+                    } else if (std.mem.eql(u8, token.str, "{")) {
+                        try ret.append(.{ .QuoteOpen = {} });
+                    } else if (std.mem.eql(u8, token.str, "}")) {
+                        try ret.append(.{ .QuoteClose = {} });
+                    } else {
+                        try ret.append(.{ .Word = try self.internString(token.str) });
+                    }
+                },
+            }
+        }
+
+        return ret;
+    }
+
+    // TODO rename maybe
+    pub fn evaluateValue(self: *Self, val: Value) EvalError!void {
+        switch (val) {
+            .Quotation => |lits| {
+                // TODO handle quotation local envs
+                //   handle env stacks
+                try self.eval(lits.items);
+            },
+            .ForeignFn => |func| {
+                try func(self);
+            },
+            else => {
+                try self.stack.push(val);
+            },
+        }
+    }
+
+    pub fn eval(self: *Self, literals: []const Literal) EvalError!void {
         var quotation_level: usize = 0;
-        var quotation_buf = ArrayList(Literal).init(allocator);
+        var quotation_buf = ArrayList(Literal).init(self.allocator);
 
         for (literals) |lit| {
             switch (lit) {
@@ -584,11 +448,13 @@ pub const Evaluator = struct {
                 },
                 .QuoteClose => {
                     if (quotation_level == 0) {
-                        return Error.QuotationUnderflow;
+                        return error.QuotationUnderflow;
                     }
                     quotation_level -= 1;
                     if (quotation_level == 0) {
-                        try ctx.stack.push(.{ .Quotation = quotation_buf });
+                        var cloned = try ArrayList(Literal).initCapacity(self.allocator, quotation_buf.items.len);
+                        cloned.appendSliceAssumeCapacity(quotation_buf.items);
+                        try self.stack.push(.{ .Quotation = cloned });
                         continue;
                     }
                 },
@@ -601,39 +467,26 @@ pub const Evaluator = struct {
             }
 
             switch (lit) {
-                .Int => |i| try ctx.stack.push(Value{ .Int = i }),
-                .Float => |f| try ctx.stack.push(Value{ .Float = f }),
-                .Boolean => |b| try ctx.stack.push(Value{ .Boolean = b }),
-                .Symbol => |idx| try ctx.stack.push(Value{ .Symbol = idx }),
+                .Int => |i| try self.stack.push(Value{ .Int = i }),
+                .Float => |f| try self.stack.push(Value{ .Float = f }),
+                .Boolean => |b| try self.stack.push(Value{ .Boolean = b }),
                 .String => |idx| {
                     // TODO
                 },
                 .Word => |idx| {
-                    const val = ctx.global_env.get(idx);
+                    // TODO lookup
+                    const val = (try self.envs.peek()).get(idx);
                     if (val) |v| {
-                        switch (v) {
-                            .Quotation => |lits| {
-                                // TODO handle quotation local envs
-                                //   handle env stacks
-                                try self.evaluate(allocator, lits.items, ctx);
-                            },
-                            .Builtin => |b_idx| {
-                                try ctx.builtin_table[b_idx].func(ctx);
-                            },
-                            else => {
-                                try ctx.stack.push(v);
-                            },
-                        }
+                        try self.evaluateValue(v);
                     } else {
-                        return Error.WordNotFound;
+                        // TODO update errorinfo with the word not found
+                        std.log.info("{}", .{self.string_table.items[idx]});
+                        return error.WordNotFound;
                     }
                 },
-                .Builtin => |idx| {
-                    try ctx.builtin_table[idx].func(ctx);
-                },
+                .Symbol => |idx| try self.stack.push(Value{ .Symbol = idx }),
                 .QuoteOpen, .QuoteClose => {
-                    std.log.info("really?", .{});
-                    return Error.InternalError;
+                    return error.InternalError;
                 },
             }
         }

@@ -1,0 +1,45 @@
+; 10 10 + .
+; { 10 / } :+ten @
+; 50 +ten .
+; { } { } 5 6 == if
+; :first :second 5 5 == if
+
+; 10 { 10 + } { 5 + } #t if
+; .stack
+{
+  make-vec
+  :record vpush!
+} :make-record @
+
+{
+  swap
+  make-record
+  :thing vpush!
+  swap vpush!
+  swap vpush!
+} :make-thing @
+
+{
+  swap
+  make-record
+  :point vpush!
+  swap vpush!
+  swap vpush!
+} :make-point @
+
+{
+  1 vget :point ==
+} :is-point? @
+
+{ 2 vget } :point-x @
+{ 3 vget } :point-y @
+
+5 10 make-point :p @
+p
+dup point-x . drop
+dup point-y . drop
+dup is-point? . drop
+
+; 10 5 make-thing :t @
+; t is-point?
+.stack
