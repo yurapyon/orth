@@ -5,7 +5,7 @@ const StringHashMap = std.StringHashMap;
 //;
 
 const lib = @import("lib.zig");
-const builtins = @import("builtins.zig").builtins;
+const builtins = @import("builtins.zig");
 
 pub fn readFile(allocator: *Allocator, filename: []const u8) ![]u8 {
     var file = try std.fs.cwd().openFile(filename, .{ .read = true });
@@ -21,11 +21,11 @@ pub fn main() !void {
     const tokens = lib.tokenize(alloc, f) catch |err| {
         switch (err) {
             error.InvalidWord => {
-                std.log.info("invalid word: {}", .{lib.error_info.lineNumber()});
+                std.log.info("invalid word: {}", .{lib.error_info.line_number});
                 return;
             },
             error.InvalidString => {
-                std.log.info("invalid string: {}", .{lib.error_info.lineNumber()});
+                std.log.info("invalid string: {}", .{lib.error_info.line_number});
                 return;
             },
             else => return err,
@@ -36,11 +36,32 @@ pub fn main() !void {
 
     const literals = try vm.parse(tokens.items);
 
-    for (builtins) |bi| {
-        try vm.envs.data.items[0].insert(try vm.internString(bi.name), .{
-            .ForeignFn = bi.func,
+    for (builtins.builtins) |bi| {
+        const idx = try vm.internString(bi.name);
+        try (try vm.envs.index(0)).insert(idx, .{
+            .ForeignFnPtr = .{
+                .name = idx,
+                .func = bi.func,
+            },
         });
     }
 
-    try vm.eval(literals.items);
+    const idx = try builtins.T.ft.internName(&vm);
+    try (try vm.envs.index(0)).insertForeignType(
+        idx,
+        .{
+            .name = idx,
+            .equals_fn = builtins.T.equals,
+        },
+    );
+
+    vm.eval(literals.items) catch |err| {
+        switch (err) {
+            error.WordNotFound => {
+                std.log.info("word not found: {}", .{lib.error_info.word_not_found});
+                return;
+            },
+            else => return err,
+        }
+    };
 }
