@@ -26,6 +26,13 @@ const StringHashMap = std.StringHashMap;
 
 // just use a number type rather than floats and ints?
 
+// TODO
+// move tokenizer and error_info into the vm
+//   makes it more threadsafe
+
+// TODO
+//   strings and quoations should be copy on write
+
 // errors ===
 
 pub const error_info = struct {
@@ -365,13 +372,12 @@ pub const Value = union(enum) {
     Int: i32,
     Float: f32,
     Boolean: bool,
+    String: usize,
     Symbol: usize,
-    // TODO make this a *ArrayList
-    Quotation: ArrayList(Literal),
+    Quotation: []const Literal,
     ForeignFnPtr: ForeignFnPtr,
     ForeignPtr: ForeignPtr,
 
-    // String: ArrayList(u8),
     // Record: Record,
 
     // note: i would like to take a slice of accepted types here
@@ -394,6 +400,8 @@ pub const Value = union(enum) {
                 .Float => |val| val == other.Float,
                 .Boolean => |val| val == other.Boolean,
                 .Symbol => |val| val == other.Symbol,
+                .String => |val| val == other.String,
+                // TODO
                 .Quotation => false,
                 .ForeignFnPtr => false,
                 .ForeignPtr => |ptr| {
@@ -416,9 +424,10 @@ pub const Value = union(enum) {
                 std.debug.print("{s}", .{str});
             },
             .Symbol => |val| std.debug.print(":{}", .{vm.string_table.items[val]}),
+            .String => |val| std.debug.print("\"{}\"", .{vm.string_table.items[val]}),
             .Quotation => |val| {
                 std.debug.print("q{{ ", .{});
-                for (val.items) |lit| {
+                for (val) |lit| {
                     lit.nicePrint(vm);
                     std.debug.print(" ", .{});
                 }
@@ -440,11 +449,7 @@ pub const VM = struct {
     const Self = @This();
 
     allocator: *Allocator,
-
-    // parse
     string_table: ArrayList([]const u8),
-
-    // eval
     word_table: ArrayList(?Value),
     type_table: ArrayList(ForeignType),
     stack: Stack(Value),
@@ -537,7 +542,7 @@ pub const VM = struct {
         switch (val) {
             .Quotation => |lits| {
                 // TODO handle locals
-                try self.eval(lits.items);
+                try self.eval(lits);
             },
             .ForeignFnPtr => |fp| {
                 try fp.func(self);
@@ -550,14 +555,16 @@ pub const VM = struct {
 
     pub fn eval(self: *Self, literals: []const Literal) EvalError!void {
         var quotation_level: usize = 0;
-        var quotation_buf = ArrayList(Literal).init(self.allocator);
+        var q_start: [*]const Literal = undefined;
+        var q_ct: usize = 0;
 
-        for (literals) |lit| {
-            switch (lit) {
+        for (literals) |*lit| {
+            switch (lit.*) {
                 .QuoteOpen => {
                     quotation_level += 1;
                     if (quotation_level == 1) {
-                        quotation_buf.items.len = 0;
+                        q_start = @ptrCast([*]const Literal, lit);
+                        q_ct = 0;
                         continue;
                     }
                 },
@@ -567,9 +574,11 @@ pub const VM = struct {
                     }
                     quotation_level -= 1;
                     if (quotation_level == 0) {
-                        var cloned = try ArrayList(Literal).initCapacity(self.allocator, quotation_buf.items.len);
-                        cloned.appendSliceAssumeCapacity(quotation_buf.items);
-                        try self.stack.push(.{ .Quotation = cloned });
+                        if (q_ct == 0) {
+                            try self.stack.push(.{ .Quotation = &[_]Literal{} });
+                        } else {
+                            try self.stack.push(.{ .Quotation = q_start[1..(q_ct + 1)] });
+                        }
                         continue;
                     }
                 },
@@ -577,17 +586,15 @@ pub const VM = struct {
             }
 
             if (quotation_level > 0) {
-                try quotation_buf.append(lit);
+                q_ct += 1;
                 continue;
             }
 
-            switch (lit) {
+            switch (lit.*) {
                 .Int => |i| try self.stack.push(Value{ .Int = i }),
                 .Float => |f| try self.stack.push(Value{ .Float = f }),
                 .Boolean => |b| try self.stack.push(Value{ .Boolean = b }),
-                .String => |idx| {
-                    // TODO
-                },
+                .String => |idx| try self.stack.push(Value{ .String = idx }),
                 .Word => |idx| {
                     const val = self.word_table.items[idx];
                     if (val) |v| {

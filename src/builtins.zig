@@ -6,6 +6,8 @@ usingnamespace lib;
 
 //;
 
+// a benefit of records is auto-generating names
+
 // map fold, etc
 
 //;

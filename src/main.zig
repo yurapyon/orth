@@ -17,6 +17,7 @@ pub fn main() !void {
     var alloc = std.heap.c_allocator;
 
     var f = try readFile(alloc, "tests/test.orth");
+    defer alloc.free(f);
 
     const tokens = lib.tokenize(alloc, f) catch |err| {
         switch (err) {
@@ -35,6 +36,10 @@ pub fn main() !void {
     var vm = try lib.VM.init(alloc);
 
     const literals = try vm.parse(tokens.items);
+    for (literals.items) |lit| {
+        // lit.nicePrint(&vm);
+        // std.debug.print("\n", .{});
+    }
 
     for (builtins.builtins) |bi| {
         const idx = try vm.internString(bi.name);

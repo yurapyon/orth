@@ -1,6 +1,15 @@
+{
+  10 +
+} :add10 @
+
+5 add10
+:add10 ref
+
 <vec> 10 20 30 3 vpush!,ct
+
 dup 0 vget
 .stack drop
+
 dup 1 vget
 .stack drop
 dup 2 vget
