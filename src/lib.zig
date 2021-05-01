@@ -14,21 +14,35 @@ const StringHashMap = std.StringHashMap;
 
 // records
 //   need to be significantly different than foreign ptrs
-//   foreign ptrs are pretty easy to use to idk
+//   foreign ptrs are pretty easy to use so idk
 
-// TODO memoize words so they dont have to be looked up over and over?
-
+// TODO
 // char type? could just use ints
 // hex ints
+// maybe do them like #\A #\b etc
+// # is an escaper thing
 
 // better int parser
 // better float parser
 
-// just use a number type rather than floats and ints?
+// TODO
+// move error_info into the vm
 
 // TODO
-// move tokenizer and error_info into the vm
-//   makes it more threadsafe
+// vm should have log/print functions or something
+//   so u can control where vm messages get printed
+//   integrate this into nicePrint functions
+// if nice print is supposed to return strings then idk
+
+// TODO
+//   values should not have to be 'cloned'
+//     they should all be pointers if they have data somewhere
+// could use reference counting for memory management
+// being on the stack or in word_table counts as a reference
+// could do manual memory management but i imagine that would get hard
+
+// string and quotation could be a *Cow(_) but, that complicates memory management
+//   would be better if they were Rc(Cow(_))
 
 // errors ===
 
@@ -37,18 +51,18 @@ pub const error_info = struct {
     pub var word_not_found: []const u8 = undefined;
 };
 
+pub const StackError = error{
+    StackOverflow,
+    StackUnderflow,
+    OutOfBounds,
+} || Allocator.Error;
+
 pub const TokenizeError = error{
     InvalidString,
     InvalidWord,
 } || Allocator.Error;
 
 pub const ParseError = error{InvalidSymbol} || Allocator.Error;
-
-pub const StackError = error{
-    StackOverflow,
-    StackUnderflow,
-    OutOfBounds,
-} || Allocator.Error;
 
 pub const EvalError = error{
     WordNotFound,
@@ -58,125 +72,45 @@ pub const EvalError = error{
     InternalError,
 } || StackError || Allocator.Error;
 
-// tokenize ===
-
-// TODO tokenize with line numbers, for error reporting from parser
-pub const Token = struct {
-    pub const Type = enum {
-        String,
-        Word,
-    };
-
-    ty: Type,
-    str: []const u8
-};
-
-pub fn charIsDelimiter(ch: u8) bool {
-    return ascii.isSpace(ch) or ch == ';';
-}
-
-pub fn charIsWordValid(ch: u8) bool {
-    return ch != '"';
-}
-
-// TODO can probably have multiline strings
-//        just have to do the thing where leading spaces are removed
-//  "hello
-//   world" should just be "hello\nworld"
-// TODO string escaping
-
-pub fn tokenize(allocator: *Allocator, input: []const u8) TokenizeError!ArrayList(Token) {
-    const State = enum {
-        Empty,
-        InComment,
-        InString,
-        InWord,
-    };
-
-    var state: State = .Empty;
-    var start: usize = 0;
-    var end: usize = 0;
-
-    var ret = ArrayList(Token).init(allocator);
-    errdefer ret.deinit();
-
-    var line_num: usize = 1;
-
-    for (input) |ch, i| {
-        // TODO where to put this so line numbers are properly reported
-        //   if \n causes the error
-        if (ch == '\n') {
-            line_num += 1;
-        }
-
-        switch (state) {
-            .Empty => {
-                if (ascii.isSpace(ch)) {
-                    continue;
-                }
-                state = switch (ch) {
-                    ';' => .InComment,
-                    '"' => .InString,
-                    else => .InWord,
-                };
-                start = i;
-                end = start;
-            },
-            .InComment => {
-                if (ch == '\n') {
-                    state = .Empty;
-                }
-            },
-            .InString => {
-                if (ch == '"') {
-                    try ret.append(.{
-                        .ty = .String,
-                        .str = input[(start + 1)..(end + 1)],
-                    });
-                    state = .Empty;
-                    continue;
-                } else if (ch == '\n') {
-                    error_info.line_number = line_num;
-                    return error.InvalidString;
-                }
-                end += 1;
-            },
-            .InWord => {
-                if (charIsDelimiter(ch)) {
-                    try ret.append(.{
-                        .ty = .Word,
-                        .str = input[start..(end + 1)],
-                    });
-                    state = .Empty;
-                    continue;
-                } else if (!charIsWordValid(ch)) {
-                    error_info.line_number = line_num;
-                    return error.InvalidWord;
-                }
-
-                end += 1;
-            },
-        }
-    }
-
-    switch (state) {
-        .InString => {
-            error_info.line_number = line_num;
-            return error.InvalidString;
-        },
-        .InWord => {
-            try ret.append(.{
-                .ty = .Word,
-                .str = input[start..(end + 1)],
-            });
-        },
-        else => {},
-    }
-
-    return ret;
-}
-
 //;
+
+pub fn Cow(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        const_data: []const T,
+        data: ArrayList(T),
+        owns_data: bool,
+
+        pub fn init(allocator: *Allocator, data: []const T) Self {
+            return .{
+                .const_data = data,
+                .data = ArrayList(T).init(allocator),
+                .owns_data = false,
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.data.deinit();
+        }
+
+        pub fn get(self: Self) []const T {
+            if (self.owns_data) {
+                return self.data.items;
+            } else {
+                return self.const_data;
+            }
+        }
+
+        pub fn getMut(self: *Self) Allocator.Error![]T {
+            if (!self.owns_data) {
+                try self.data.appendSlice(self.const_data);
+                self.owns_data = true;
+            }
+            return self.data.items;
+        }
+    };
+}
 
 // TODO have a "fixed stack" that can overflow?
 pub fn Stack(comptime T: type) type {
@@ -227,9 +161,18 @@ pub fn Stack(comptime T: type) type {
     };
 }
 
-pub const Literal = union(enum) {
-    const Self = @This();
+// TODO tokenize with line numbers, for error reporting from parser
+pub const Token = struct {
+    pub const Type = enum {
+        String,
+        Word,
+    };
 
+    ty: Type,
+    str: []const u8
+};
+
+pub const Literal = union(enum) {
     Int: i32,
     Float: f32,
     Boolean: bool,
@@ -238,22 +181,6 @@ pub const Literal = union(enum) {
     Symbol: usize,
     QuoteOpen,
     QuoteClose,
-
-    pub fn nicePrint(self: Self, vm: *VM) void {
-        switch (self) {
-            .Int => |val| std.debug.print("{}i", .{val}),
-            .Float => |val| std.debug.print("{d}f", .{val}),
-            .Boolean => |val| {
-                const str = if (val) "#t" else "#f";
-                std.debug.print("{s}", .{str});
-            },
-            .String => |val| std.debug.print("\"{}\"", .{val}),
-            .Word => |val| std.debug.print("{}", .{vm.symbol_table.items[val]}),
-            .Symbol => |val| std.debug.print(":{}", .{vm.symbol_table.items[val]}),
-            .QuoteOpen => std.debug.print("{{", .{}),
-            .QuoteClose => std.debug.print("}}", .{}),
-        }
-    }
 };
 
 pub const ForeignFn = fn (vm: *VM) EvalError!void;
@@ -263,6 +190,7 @@ pub const ForeignFnPtr = struct {
     func: ForeignFn,
 };
 
+// TODO maybe just rename to Pointer
 pub const ForeignPtr = struct {
     const Self = @This();
     pub const Ptr = opaque {};
@@ -275,144 +203,83 @@ pub const ForeignPtr = struct {
     }
 };
 
-pub const ForeignType = struct {
-    const Self = @This();
-
-    name: []const u8,
-    display_fn: fn (*VM, ForeignPtr) void,
-    equals_fn: fn (*VM, ForeignPtr, ForeignPtr) bool,
-
-    pub fn genHelper(
-        comptime T: type,
-        comptime display_fn: ?@TypeOf(defaultDisplay),
-        comptime equals_fn: ?@TypeOf(defaultEquals),
-    ) type {
-        const name_str = @typeName(T);
-
-        return struct {
-            const Self_ = @This();
-
-            var type_id: usize = undefined;
-
-            // TODO rename or move somewhere else somehow?
-            pub fn addToVM(vm: *VM) Allocator.Error!usize {
-                const idx = vm.type_table.items.len;
-                try vm.type_table.append(.{
-                    .name = name_str,
-                    .display_fn = display_fn orelse defaultDisplay,
-                    .equals_fn = equals_fn orelse defaultEquals,
-                });
-                Self_.type_id = idx;
-                return idx;
-            }
-
-            pub fn assertValueIsType(val: Value) EvalError!*T {
-                try val.assertType(&[_]@TagType(Value){.ForeignPtr});
-
-                if (val.ForeignPtr.ty != Self_.type_id) {
-                    return error.TypeError;
-                } else {
-                    return val.ForeignPtr.cast(T);
-                }
-            }
-
-            pub fn make(obj: *T) Value {
-                return .{
-                    .ForeignPtr = .{
-                        .ty = Self_.type_id,
-                        .ptr = @ptrCast(*ForeignPtr.Ptr, obj),
-                    },
-                };
-            }
-
-            pub fn get(vm: *VM, comptime ty: []const u8, comptime field: []const u8) EvalError!void {
-                const val = try vm.stack.pop();
-                const ptr = try Self_.assertValueIsType(val);
-                try vm.stack.push(@unionInit(Value, ty, @field(ptr, field)));
-            }
-
-            pub fn set(
-                vm: *VM,
-                comptime ty: []const u8,
-                comptime field: []const u8,
-                set_to: Value,
-            ) EvalError!void {
-                const val = try vm.stack.peek();
-                const ptr = try Self_.assertValueIsType(val);
-                @field(ptr, field) = @field(set_to, ty);
-            }
-        };
-    }
-
-    pub fn defaultDisplay(vm: *VM, p: ForeignPtr) void {
-        std.debug.print("*<{} {}>", .{ vm.type_table.items[p.ty].name, p.ptr });
-    }
-
-    pub fn defaultEquals(vm: *VM, p1: ForeignPtr, p2: ForeignPtr) bool {
-        return p1.ptr == p2.ptr;
-    }
-};
-
-pub fn Cow(comptime T: type) type {
+pub fn ForeignTypeDef(
+    comptime T: type,
+    comptime display_fn_: ?fn (*VM, ForeignPtr) void,
+    comptime equals_fn_: ?fn (*VM, ForeignPtr, ForeignPtr) bool,
+) type {
     return struct {
-        const Self = @This();
+        const name = @typeName(T);
+        const display_fn = display_fn_ orelse defaultDisplay;
+        const equals_fn = equals_fn_ orelse defaultEquals;
 
-        const_data: []const T,
-        data: ArrayList(T),
-        owns_data: bool,
+        var type_id: usize = undefined;
 
-        pub fn init(allocator: *Allocator, data: []const T) Self {
+        pub fn foreignType() ForeignType {
             return .{
-                .const_data = data,
-                .data = ArrayList(T).init(allocator),
-                .owns_data = false,
+                .name = name,
+                .display_fn = display_fn,
+                .equals_fn = equals_fn,
             };
         }
 
-        pub fn deinit(self: *Self) void {
-            self.data.deinit();
-        }
-
-        pub fn get(self: Self) []const T {
-            if (self.owns_data) {
-                return self.data.items;
+        pub fn assertValueIsType(val: Value) EvalError!*T {
+            if (val != .ForeignPtr or
+                val.ForeignPtr.ty != type_id)
+            {
+                return error.TypeError;
             } else {
-                return self.const_data;
+                return val.ForeignPtr.cast(T);
             }
         }
 
-        pub fn getMut(self: *Self) Allocator.Error![]T {
-            if (!self.owns_data) {
-                try self.data.appendSlice(self.const_data);
-                self.owns_data = true;
-            }
-            return self.data.items;
+        pub fn makePtr(obj: *T) Value {
+            return .{
+                .ForeignPtr = .{
+                    .ty = type_id,
+                    .ptr = @ptrCast(*ForeignPtr.Ptr, obj),
+                },
+            };
+        }
+
+        pub fn getField(
+            vm: *VM,
+            comptime ty: []const u8,
+            comptime field: []const u8,
+        ) EvalError!void {
+            const val = try vm.stack.pop();
+            const ptr = try assertValueIsType(val);
+            try vm.stack.push(@unionInit(Value, ty, @field(ptr, field)));
+        }
+
+        pub fn setField(
+            vm: *VM,
+            comptime ty: []const u8,
+            comptime field: []const u8,
+            set_to: Value,
+        ) EvalError!void {
+            const val = try vm.stack.peek();
+            const ptr = try assertValueIsType(val);
+            @field(ptr, field) = @field(set_to, ty);
+        }
+
+        fn defaultDisplay(vm: *VM, p: ForeignPtr) void {
+            std.debug.print("*<{} {}>", .{ vm.type_table.items[p.ty].name, p.ptr });
+        }
+
+        fn defaultEquals(vm: *VM, p1: ForeignPtr, p2: ForeignPtr) bool {
+            return p1.ptr == p2.ptr;
         }
     };
 }
 
-// TODO
-// vm should have log/print functions or something
-//   so u can control where vm messages get printed
-//   integrate this into nicePrint functions
-
-// TODO
-//   values should not have to be 'cloned'
-//     they should all be pointers if they have data somewhere
-// could use reference counting for memory management
-// being on the stack or in word_table counts as a reference
-// could do manual memory management but i imagine that would get hard
-
-// strings should not be interned,
-//   only symbols and words
-//   can define new symbols at runtime with strings
-
-// string and quotation could be a *Cow(_) but, that complicates memory management
-//   would be better if they were Rc(Cow(_))
+pub const ForeignType = struct {
+    name: []const u8,
+    display_fn: fn (*VM, ForeignPtr) void,
+    equals_fn: fn (*VM, ForeignPtr, ForeignPtr) bool,
+};
 
 pub const Value = union(enum) {
-    const Self = @This();
-
     Int: i32,
     Float: f32,
     Boolean: bool,
@@ -421,64 +288,6 @@ pub const Value = union(enum) {
     Quotation: usize,
     ForeignFnPtr: ForeignFnPtr,
     ForeignPtr: ForeignPtr,
-
-    // note: i would like to take a slice of accepted types here
-    //   doesnt work in 0.7.0 but does work in 0.8.0 master as of 5/1/21
-    pub fn assertType(self: Self, comptime accepted_types: []const @TagType(Value)) EvalError!void {
-        var is_ok = false;
-        for (accepted_types) |ty| {
-            if (@as(@TagType(Value), self) == ty) {
-                is_ok = true;
-            }
-        }
-        if (!is_ok) return error.TypeError;
-    }
-
-    // TODO maybe rearange and make equals and nicePrint functions in VM rather than Value
-    pub fn equals(self: Self, vm: *VM, other: Self) bool {
-        if (@as(@TagType(Self), self) == @as(@TagType(Self), other)) {
-            return switch (self) {
-                .Int => |val| val == other.Int,
-                .Float => |val| val == other.Float,
-                .Boolean => |val| val == other.Boolean,
-                .Symbol => |val| val == other.Symbol,
-                // TODO
-                .String => false,
-                .Quotation => false,
-                .ForeignFnPtr => false,
-                .ForeignPtr => |ptr| {
-                    return ptr.ty == other.ForeignPtr.ty and
-                        vm.type_table.items[ptr.ty].equals_fn(vm, self.ForeignPtr, other.ForeignPtr);
-                },
-            };
-        } else {
-            return false;
-        }
-    }
-
-    // TODO dont print, return a string
-    pub fn nicePrint(self: Self, vm: *VM) void {
-        switch (self) {
-            .Int => |val| std.debug.print("{}i", .{val}),
-            .Float => |val| std.debug.print("{d}f", .{val}),
-            .Boolean => |val| {
-                const str = if (val) "#t" else "#f";
-                std.debug.print("{s}", .{str});
-            },
-            .Symbol => |val| std.debug.print(":{}", .{vm.symbol_table.items[val]}),
-            .String => |val| std.debug.print("\"{}\"", .{vm.string_table.items[val].get()}),
-            .Quotation => |val| {
-                std.debug.print("q{{ ", .{});
-                for (vm.quotation_table.items[val].get()) |lit| {
-                    lit.nicePrint(vm);
-                    std.debug.print(" ", .{});
-                }
-                std.debug.print("}}", .{});
-            },
-            .ForeignFnPtr => |val| std.debug.print("fn({})", .{vm.symbol_table.items[val.name]}),
-            .ForeignPtr => |ptr| vm.type_table.items[ptr.ty].display_fn(vm, ptr),
-        }
-    }
 };
 
 pub const Local = struct {
@@ -529,7 +338,129 @@ pub const VM = struct {
         self.symbol_table.deinit();
     }
 
-    //;
+    // tokenize ===
+
+    fn charIsDelimiter(ch: u8) bool {
+        return ascii.isSpace(ch) or ch == ';';
+    }
+
+    fn charIsWordValid(ch: u8) bool {
+        return ch != '"';
+    }
+
+    // TODO can probably have multiline strings
+    //        just have to do the thing where leading spaces are removed
+    //  "hello
+    //   world" should just be "hello\nworld"
+    // TODO string escaping
+    pub fn tokenize(self: *Self, input: []const u8) TokenizeError!ArrayList(Token) {
+        const State = enum {
+            Empty,
+            InComment,
+            InString,
+            InWord,
+        };
+
+        var state: State = .Empty;
+        var start: usize = 0;
+        var end: usize = 0;
+
+        var ret = ArrayList(Token).init(self.allocator);
+        errdefer ret.deinit();
+
+        var line_num: usize = 1;
+
+        for (input) |ch, i| {
+            // TODO where to put this so line numbers are properly reported
+            //   if \n causes the error
+            if (ch == '\n') {
+                line_num += 1;
+            }
+
+            switch (state) {
+                .Empty => {
+                    if (ascii.isSpace(ch)) {
+                        continue;
+                    }
+                    state = switch (ch) {
+                        ';' => .InComment,
+                        '"' => .InString,
+                        else => .InWord,
+                    };
+                    start = i;
+                    end = start;
+                },
+                .InComment => {
+                    if (ch == '\n') {
+                        state = .Empty;
+                    }
+                },
+                .InString => {
+                    if (ch == '"') {
+                        try ret.append(.{
+                            .ty = .String,
+                            .str = input[(start + 1)..(end + 1)],
+                        });
+                        state = .Empty;
+                        continue;
+                    } else if (ch == '\n') {
+                        error_info.line_number = line_num;
+                        return error.InvalidString;
+                    }
+                    end += 1;
+                },
+                .InWord => {
+                    if (charIsDelimiter(ch)) {
+                        try ret.append(.{
+                            .ty = .Word,
+                            .str = input[start..(end + 1)],
+                        });
+                        state = .Empty;
+                        continue;
+                    } else if (!charIsWordValid(ch)) {
+                        error_info.line_number = line_num;
+                        return error.InvalidWord;
+                    }
+
+                    end += 1;
+                },
+            }
+        }
+
+        switch (state) {
+            .InString => {
+                error_info.line_number = line_num;
+                return error.InvalidString;
+            },
+            .InWord => {
+                try ret.append(.{
+                    .ty = .Word,
+                    .str = input[start..(end + 1)],
+                });
+            },
+            else => {},
+        }
+
+        return ret;
+    }
+
+    // parse ===
+
+    pub fn nicePrintLiteral(self: *Self, lit: Literal) void {
+        switch (lit) {
+            .Int => |val| std.debug.print("{}", .{val}),
+            .Float => |val| std.debug.print("{d}f", .{val}),
+            .Boolean => |val| {
+                const str = if (val) "#t" else "#f";
+                std.debug.print("{s}", .{str});
+            },
+            .String => |val| std.debug.print("\"{}\"", .{val}),
+            .Word => |val| std.debug.print("{}", .{self.symbol_table.items[val]}),
+            .Symbol => |val| std.debug.print(":{}", .{self.symbol_table.items[val]}),
+            .QuoteOpen => std.debug.print("{{", .{}),
+            .QuoteClose => std.debug.print("}}", .{}),
+        }
+    }
 
     pub fn internSymbol(self: *Self, str: []const u8) Allocator.Error!usize {
         for (self.symbol_table.items) |st_str, i| {
@@ -587,6 +518,62 @@ pub const VM = struct {
         }
 
         return ret;
+    }
+
+    // eval ===
+
+    // TODO dont print, return a string
+    pub fn nicePrintValue(self: *Self, value: Value) void {
+        switch (value) {
+            .Int => |val| std.debug.print("{}", .{val}),
+            .Float => |val| std.debug.print("{d}f", .{val}),
+            .Boolean => |val| {
+                const str = if (val) "#t" else "#f";
+                std.debug.print("{s}", .{str});
+            },
+            .Symbol => |val| std.debug.print(":{}", .{self.symbol_table.items[val]}),
+            .String => |val| std.debug.print("\"{}\"", .{self.string_table.items[val].get()}),
+            .Quotation => |val| {
+                std.debug.print("q{{ ", .{});
+                for (self.quotation_table.items[val].get()) |lit| {
+                    self.nicePrintLiteral(lit);
+                    std.debug.print(" ", .{});
+                }
+                std.debug.print("}}", .{});
+            },
+            .ForeignFnPtr => |val| std.debug.print("fn({})", .{self.symbol_table.items[val.name]}),
+            .ForeignPtr => |ptr| self.type_table.items[ptr.ty].display_fn(self, ptr),
+        }
+    }
+
+    // TODO this is kindof a weird name
+    pub fn equalsValue(self: *Self, a: Value, b: Value) bool {
+        if (@as(@TagType(Value), a) == @as(@TagType(Value), b)) {
+            return switch (a) {
+                .Int => |val| val == b.Int,
+                .Float => |val| val == b.Float,
+                .Boolean => |val| val == b.Boolean,
+                .Symbol => |val| val == b.Symbol,
+                // TODO
+                .String => false,
+                .Quotation => false,
+                .ForeignFnPtr => false,
+                .ForeignPtr => |ptr| {
+                    // TODO maybe move the type check into defaultEquals
+                    return ptr.ty == b.ForeignPtr.ty and
+                        self.type_table.items[ptr.ty].equals_fn(self, a.ForeignPtr, b.ForeignPtr);
+                },
+            };
+        } else {
+            return false;
+        }
+    }
+
+    pub fn defineForeignType(self: *Self, comptime T: type) Allocator.Error!usize {
+        const idx = self.type_table.items.len;
+        try self.type_table.append(T.foreignType());
+        T.type_id = idx;
+        return idx;
     }
 
     // TODO

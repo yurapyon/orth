@@ -1,28 +1,22 @@
-; {
-  ; 10 +
-; } :add10 @
+{ 10 + } :k <map> { mset! } keep
+30 :j rot { mset! } keep
+:new-map @
 
- { }
- { 1 }
- { 1 2 }
+new-map . drop
 
-; 5 add10
-; :add10 ref
+10
+:k new-map mget
+eval
+.stack
 
-"hi" :hi @
-hi .stack
-mod .stack
-:ai @
-; hi mod .
+new-map <map>,free
 
-<vec> 10 20 30 3 vpush!,ct
+<vec>
+.stack
 
-dup 0 vget
-.stack drop
+10 :ten @
 
-dup 1 vget
-.stack drop
-dup 2 vget
-.stack drop
+; 20 :j map { set-map! } keep
+; 30 :h map { set-map! } keep
+; 40 :g map { set-map! } keep
 
-vec-free

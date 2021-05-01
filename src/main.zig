@@ -13,13 +13,14 @@ pub fn readFile(allocator: *Allocator, filename: []const u8) ![]u8 {
     return file.readToEndAlloc(allocator, std.math.maxInt(usize));
 }
 
-test "main" {
-    var alloc = std.testing.allocator;
+pub fn something(allocator: *Allocator) !void {
+    var f = try readFile(allocator, "tests/test.orth");
+    defer allocator.free(f);
 
-    var f = try readFile(alloc, "tests/test.orth");
-    defer alloc.free(f);
+    var vm = lib.VM.init(allocator);
+    defer vm.deinit();
 
-    const tokens = lib.tokenize(alloc, f) catch |err| {
+    const tokens = vm.tokenize(f) catch |err| {
         switch (err) {
             error.InvalidWord => {
                 std.log.info("invalid word: {}", .{lib.error_info.line_number});
@@ -34,9 +35,6 @@ test "main" {
     };
     defer tokens.deinit();
 
-    var vm = lib.VM.init(alloc);
-    defer vm.deinit();
-
     const literals = try vm.parse(tokens.items);
     defer literals.deinit();
     for (literals.items) |lit| {
@@ -45,7 +43,7 @@ test "main" {
     }
 
     for (builtins.builtins) |bi| {
-        const idx = try vm.internString(bi.name);
+        const idx = try vm.internSymbol(bi.name);
         vm.word_table.items[idx] = lib.Value{
             .ForeignFnPtr = .{
                 .name = idx,
@@ -54,9 +52,8 @@ test "main" {
         };
     }
 
-    _ = try builtins.Vec.ft.addToVM(&vm);
-
-    std.debug.print("\n", .{});
+    _ = try vm.defineForeignType(builtins.Vec.ft);
+    _ = try vm.defineForeignType(builtins.Map.ft);
 
     vm.eval(literals.items) catch |err| {
         switch (err) {
@@ -69,4 +66,11 @@ test "main" {
     };
 }
 
-pub fn main() !void {}
+test "main" {
+    std.debug.print("\n", .{});
+    try something(std.testing.allocator);
+}
+
+pub fn main() !void {
+    try something(std.heap.c_allocator);
+}
