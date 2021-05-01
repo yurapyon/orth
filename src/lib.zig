@@ -232,7 +232,7 @@ pub const Literal = union(enum) {
     QuoteOpen,
     QuoteClose,
 
-    pub fn nicePrint(self: Self, string_table: []const []const u8) void {
+    pub fn nicePrint(self: Self, vm: *VM) void {
         switch (self) {
             .Int => |val| std.debug.print("{}i", .{val}),
             .Float => |val| std.debug.print("{d}f", .{val}),
@@ -240,9 +240,9 @@ pub const Literal = union(enum) {
                 const str = if (val) "#t" else "#f";
                 std.debug.print("{s}", .{str});
             },
-            .String => |val| std.debug.print("\"{}\"", .{string_table[val]}),
-            .Word => |val| std.debug.print("{}", .{string_table[val]}),
-            .Symbol => |val| std.debug.print(":{}", .{string_table[val]}),
+            .String => |val| std.debug.print("\"{}\"", .{vm.string_table.items[val]}),
+            .Word => |val| std.debug.print("{}", .{vm.string_table.items[val]}),
+            .Symbol => |val| std.debug.print(":{}", .{vm.string_table.items[val]}),
             .QuoteOpen => std.debug.print("{{", .{}),
             .QuoteClose => std.debug.print("}}", .{}),
         }
@@ -263,12 +263,10 @@ pub const TypedPtr = struct {
     ptr: *Ptr,
 };
 
-// these should be in envs
-// Foreign types can be values
 pub const ForeignType = struct {
     const Self = @This();
 
-    name: usize,
+    name: []const u8,
     display_fn: fn (*VM, TypedPtr) void = defaultDisplay,
     equals_fn: fn (*VM, TypedPtr, TypedPtr) bool = defaultEquals,
 
@@ -282,18 +280,22 @@ pub const ForeignType = struct {
         return struct {
             const Self_ = @This();
 
-            var name_id: usize = undefined;
+            var type_id: usize = undefined;
 
-            pub fn internName(vm: *VM) Allocator.Error!usize {
-                Self_.name_id = try vm.internString(name_str);
-                return Self_.name_id;
+            pub fn addToVM(vm: *VM) Allocator.Error!usize {
+                Self_.type_id = try vm.defineForeignType(.{
+                    .name = name_str,
+                    // TODO
+                    // .display_fn
+                });
+                return Self_.type_id;
             }
 
             pub fn make(vm: *VM) EvalError!void {
                 var obj = try vm.allocator.create(T);
                 try vm.stack.push(.{
                     .TypedPtr = .{
-                        .ty = Self_.name_id,
+                        .ty = Self_.type_id,
                         .ptr = @ptrCast(*TypedPtr.Ptr, obj),
                     },
                 });
@@ -303,7 +305,7 @@ pub const ForeignType = struct {
                 const val = try vm.stack.pop();
                 try val.assertType(&[_]@TagType(Value){.TypedPtr});
 
-                if (val.TypedPtr.ty != Self_.name_id) {
+                if (val.TypedPtr.ty != Self_.type_id) {
                     return error.TypeError;
                 } else {
                     const t_ptr = @ptrCast(*T, @alignCast(@alignOf(T), val.TypedPtr.ptr));
@@ -315,7 +317,7 @@ pub const ForeignType = struct {
                 const val = try vm.stack.pop();
                 try val.assertType(&[_]@TagType(Value){.TypedPtr});
 
-                if (val.TypedPtr.ty != Self_.name_id) {
+                if (val.TypedPtr.ty != Self_.type_id) {
                     return error.TypeError;
                 } else {
                     const t_ptr = @ptrCast(*T, @alignCast(@alignOf(T), val.TypedPtr.ptr));
@@ -326,7 +328,7 @@ pub const ForeignType = struct {
             pub fn set(vm: *VM, comptime ty: []const u8, comptime field: []const u8, set_to: Value) EvalError!void {
                 const val = try vm.stack.peek();
                 try val.assertType(&[_]@TagType(Value){.TypedPtr});
-                if (val.TypedPtr.ty != Self_.name_id) {
+                if (val.TypedPtr.ty != Self_.type_id) {
                     return error.TypeError;
                 } else {
                     const t_ptr = @ptrCast(*T, @alignCast(@alignOf(T), val.TypedPtr.ptr));
@@ -358,7 +360,7 @@ pub const ForeignType = struct {
 //   values should not have to be 'cloned'
 //     they should all be pointers if they have data somewhere
 // could use reference counting for memory management
-// being on the stack or in an env counts as a reference
+// being on the stack or in word_table counts as a reference
 // could do manual memory management but i imagine that would get hard
 
 pub const Value = union(enum) {
@@ -376,8 +378,6 @@ pub const Value = union(enum) {
     // String: ArrayList(u8),
     // TODO make this a *ArrayList
     // Record: Record,
-
-    // Env: Env,
 
     // TODO dont take a slice here
     pub fn assertType(self: Self, comptime accepted_types: []const @TagType(Value)) EvalError!void {
@@ -411,7 +411,7 @@ pub const Value = union(enum) {
     // TODO dont print, return a string
     // if type is a typed ptr, look for a print function
     //    or, dont do this and just have print funcitons be part of the lib the ptr is from
-    pub fn nicePrint(self: Self, string_table: []const []const u8) void {
+    pub fn nicePrint(self: Self, vm: *VM) void {
         switch (self) {
             .Int => |val| std.debug.print("{}i", .{val}),
             .Float => |val| std.debug.print("{d}f", .{val}),
@@ -419,73 +419,30 @@ pub const Value = union(enum) {
                 const str = if (val) "#t" else "#f";
                 std.debug.print("{s}", .{str});
             },
-            .Symbol => |val| std.debug.print(":{}", .{string_table[val]}),
+            .Symbol => |val| std.debug.print(":{}", .{vm.string_table.items[val]}),
             .Quotation => |val| {
                 std.debug.print("q{{ ", .{});
                 for (val.items) |lit| {
-                    lit.nicePrint(string_table);
+                    lit.nicePrint(vm);
                     std.debug.print(" ", .{});
                 }
                 std.debug.print("}}", .{});
             },
-            .ForeignFnPtr => |val| std.debug.print("fn({})", .{string_table[val.name]}),
+            .ForeignFnPtr => |val| std.debug.print("fn({})", .{vm.string_table.items[val.name]}),
 
             // TODO
             .TypedPtr => |tp| {
-                std.debug.print("*<{} {}>", .{ string_table[tp.ty], tp.ptr });
+                std.debug.print("*<{} {}>", .{ vm.type_table.items[tp.ty].name, tp.ptr });
             },
             .Vec => |val| {
                 std.debug.print("v[ ", .{});
                 for (val.items) |v| {
-                    v.nicePrint(string_table);
+                    v.nicePrint(vm);
                     std.debug.print(" ", .{});
                 }
                 std.debug.print("]", .{});
             },
         }
-    }
-};
-
-// interned strings could be in the env
-//  but this messes with the idea of just using a usize for ids
-
-pub const Env = struct {
-    const Self = @This();
-
-    type_table: AutoHashMap(usize, ForeignType),
-    table: AutoHashMap(usize, Value),
-
-    pub fn init(allocator: *Allocator) Self {
-        return .{
-            .type_table = AutoHashMap(usize, ForeignType).init(allocator),
-            .table = AutoHashMap(usize, Value).init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.type_table.deinit();
-        // TODO free values
-        self.table.deinit();
-    }
-
-    //;
-
-    // TODO rename to insertValue and getValue
-    pub fn insert(self: *Self, id: usize, val: Value) Allocator.Error!void {
-        try self.table.put(id, val);
-    }
-
-    pub fn get(self: Self, id: usize) ?Value {
-        return self.table.get(id);
-    }
-
-    pub fn insertForeignType(self: *Self, id: usize, ty: ForeignType) Allocator.Error!void {
-        try self.type_table.put(id, ty);
-    }
-
-    // TODO having to use the id here is kinda clunky
-    pub fn getForeignType(self: Self, id: usize) ?ForeignType {
-        return self.type_table.get(id);
     }
 };
 
@@ -504,29 +461,28 @@ pub const VM = struct {
     string_table: ArrayList([]const u8),
 
     // eval
+    word_table: ArrayList(?Value),
+    type_table: ArrayList(ForeignType),
     stack: Stack(Value),
     locals: Stack(Local),
-    envs: Stack(Env),
 
     pub fn init(allocator: *Allocator) Allocator.Error!Self {
         var ret = .{
             .allocator = allocator,
             .string_table = ArrayList([]const u8).init(allocator),
+            .word_table = ArrayList(?Value).init(allocator),
+            .type_table = ArrayList(ForeignType).init(allocator),
             .stack = Stack(Value).init(allocator),
             .locals = Stack(Local).init(allocator),
-            .envs = Stack(Env).init(allocator),
         };
-        try ret.envs.push(Env.init(allocator));
         return ret;
     }
 
     pub fn deinit(self: *Self) void {
-        for (self.envs.data.items) |env| {
-            env.deinit();
-        }
-        self.envs.deinit();
         self.locals.deinit();
         self.stack.deinit();
+        self.type_table.deinit();
+        self.word_table.deinit();
         self.string_table.deinit();
     }
 
@@ -542,6 +498,7 @@ pub const VM = struct {
         // TODO copy strings on interning
         const idx = self.string_table.items.len;
         try self.string_table.append(str);
+        try self.word_table.append(null);
         return idx;
     }
 
@@ -589,21 +546,19 @@ pub const VM = struct {
         return ret;
     }
 
-    pub fn envLookup(self: *Self, name_idx: usize, start_idx: usize) StackError!?Value {
-        var i: usize = start_idx;
-        while (i < self.envs.data.items.len) : (i += 1) {
-            if ((try self.envs.index(i)).get(name_idx)) |val| {
-                return val;
-            }
-        }
-        return null;
+    // TODO
+    // fn define()
+
+    pub fn defineForeignType(self: *Self, ty: ForeignType) Allocator.Error!usize {
+        const idx = self.type_table.items.len;
+        try self.type_table.append(ty);
+        return idx;
     }
 
     pub fn evaluateValue(self: *Self, val: Value) EvalError!void {
         switch (val) {
             .Quotation => |lits| {
-                // TODO handle quotation local envs
-                //   handle env stacks
+                // TODO handle locals
                 try self.eval(lits.items);
             },
             .ForeignFnPtr => |fp| {
@@ -656,7 +611,7 @@ pub const VM = struct {
                     // TODO
                 },
                 .Word => |idx| {
-                    const val = try self.envLookup(idx, 0);
+                    const val = self.word_table.items[idx];
                     if (val) |v| {
                         try self.evaluateValue(v);
                     } else {

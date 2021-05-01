@@ -38,22 +38,15 @@ pub fn main() !void {
 
     for (builtins.builtins) |bi| {
         const idx = try vm.internString(bi.name);
-        try (try vm.envs.index(0)).insert(idx, .{
+        vm.word_table.items[idx] = lib.Value{
             .ForeignFnPtr = .{
                 .name = idx,
                 .func = bi.func,
             },
-        });
+        };
     }
 
-    const idx = try builtins.T.ft.internName(&vm);
-    try (try vm.envs.index(0)).insertForeignType(
-        idx,
-        .{
-            .name = idx,
-            .equals_fn = builtins.T.equals,
-        },
-    );
+    _ = try builtins.T.ft.addToVM(&vm);
 
     vm.eval(literals.items) catch |err| {
         switch (err) {

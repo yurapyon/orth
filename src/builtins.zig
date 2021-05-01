@@ -5,9 +5,6 @@ usingnamespace lib;
 
 //;
 
-// TODO
-// env manipulation from within orth
-
 // map fold, etc
 
 //;
@@ -24,13 +21,17 @@ pub fn f_define(vm: *VM) EvalError!void {
     const name = try vm.stack.pop();
     try name.assertType(&[_]ValTag{.Symbol});
     const value = try vm.stack.pop();
-    try (try vm.envs.index(0)).insert(name.Symbol, value);
+    if (vm.word_table.items[name.Symbol]) |prev| {
+        // notify of overwrite
+    } else {
+        vm.word_table.items[name.Symbol] = value;
+    }
 }
 
 pub fn f_ref(vm: *VM) EvalError!void {
     const name = try vm.stack.pop();
     try name.assertType(&[_]ValTag{.Symbol});
-    if (try vm.envLookup(name.Symbol, 0)) |val| {
+    if (vm.word_table.items[name.Symbol]) |val| {
         try vm.stack.push(val);
     } else {
         lib.error_info.word_not_found = vm.string_table.items[name.Symbol];
@@ -51,14 +52,14 @@ pub fn f_print_stack(vm: *VM) EvalError!void {
     std.debug.print("STACK| len: {}\n", .{vm.stack.data.items.len});
     for (vm.stack.data.items) |it, i| {
         std.debug.print("  {}| ", .{vm.stack.data.items.len - i - 1});
-        it.nicePrint(vm.string_table.items);
+        it.nicePrint(vm);
         std.debug.print("\n", .{});
     }
 }
 
 pub fn f_print_top(vm: *VM) EvalError!void {
     std.debug.print("TOP| ", .{});
-    (try vm.stack.peek()).nicePrint(vm.string_table.items);
+    (try vm.stack.peek()).nicePrint(vm);
     std.debug.print("\n", .{});
 }
 
