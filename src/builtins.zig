@@ -8,6 +8,8 @@ usingnamespace lib;
 
 // a benefit of records is auto-generating names
 
+// TODO test that modifying a quoation works
+
 // map fold, etc
 
 //;
@@ -37,7 +39,7 @@ pub fn f_ref(vm: *VM) EvalError!void {
     if (vm.word_table.items[name.Symbol]) |val| {
         try vm.stack.push(val);
     } else {
-        lib.error_info.word_not_found = vm.string_table.items[name.Symbol];
+        lib.error_info.word_not_found = vm.symbol_table.items[name.Symbol];
         return error.WordNotFound;
     }
 }
@@ -295,12 +297,26 @@ pub fn f_vec_get(vm: *VM) EvalError!void {
     try vm.stack.push(vec_ptr.data.items[@intCast(usize, idx.Int)]);
 }
 
+//;
+
+pub fn f_mod(vm: *VM) EvalError!void {
+    const val = try vm.stack.peek();
+    try val.assertType(&[_]ValTag{.String});
+    var str = try vm.string_table.items[val.String].getMut();
+    str[0] = 'a';
+}
+
 // =====
 
 pub const builtins = [_]struct {
     name: []const u8,
     func: ForeignFn,
 }{
+    .{
+        .name = "mod",
+        .func = f_mod,
+    },
+
     .{
         .name = "panic",
         .func = f_panic,
@@ -381,7 +397,7 @@ pub const builtins = [_]struct {
     },
     .{
         .name = "vec-free",
-        .func = f_make_vec,
+        .func = f_vec_free,
     },
     .{
         .name = "vpush!",

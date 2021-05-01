@@ -1,9 +1,19 @@
-{
-  10 +
-} :add10 @
+; {
+  ; 10 +
+; } :add10 @
 
-5 add10
-:add10 ref
+ { }
+ { 1 }
+ { 1 2 }
+
+; 5 add10
+; :add10 ref
+
+"hi" :hi @
+hi .stack
+mod .stack
+:ai @
+; hi mod .
 
 <vec> 10 20 30 3 vpush!,ct
 
@@ -13,4 +23,6 @@ dup 0 vget
 dup 1 vget
 .stack drop
 dup 2 vget
-.stack
+.stack drop
+
+vec-free

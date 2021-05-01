@@ -13,8 +13,8 @@ pub fn readFile(allocator: *Allocator, filename: []const u8) ![]u8 {
     return file.readToEndAlloc(allocator, std.math.maxInt(usize));
 }
 
-pub fn main() !void {
-    var alloc = std.heap.c_allocator;
+test "main" {
+    var alloc = std.testing.allocator;
 
     var f = try readFile(alloc, "tests/test.orth");
     defer alloc.free(f);
@@ -32,10 +32,13 @@ pub fn main() !void {
             else => return err,
         }
     };
+    defer tokens.deinit();
 
-    var vm = try lib.VM.init(alloc);
+    var vm = lib.VM.init(alloc);
+    defer vm.deinit();
 
     const literals = try vm.parse(tokens.items);
+    defer literals.deinit();
     for (literals.items) |lit| {
         // lit.nicePrint(&vm);
         // std.debug.print("\n", .{});
@@ -53,6 +56,8 @@ pub fn main() !void {
 
     _ = try builtins.Vec.ft.addToVM(&vm);
 
+    std.debug.print("\n", .{});
+
     vm.eval(literals.items) catch |err| {
         switch (err) {
             error.WordNotFound => {
@@ -63,3 +68,5 @@ pub fn main() !void {
         }
     };
 }
+
+pub fn main() !void {}
