@@ -1,4 +1,5 @@
 const std = @import("std");
+const ArrayList = std.ArrayList;
 
 const lib = @import("lib.zig");
 usingnamespace lib;
@@ -188,7 +189,7 @@ pub fn f_if(vm: *VM) EvalError!void {
 pub fn f_equal(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     const b = try vm.stack.pop();
-    try vm.stack.push(.{ .Boolean = a.equals(b) });
+    try vm.stack.push(.{ .Boolean = a.equals(vm, b) });
 }
 
 // stack manipulation ==
@@ -231,19 +232,46 @@ pub fn f_over(vm: *VM) EvalError!void {
     try vm.stack.push((try vm.stack.index(1)).*);
 }
 
-// vec ==
+// vec ===
+
+pub const Vec = struct {
+    const Self = @This();
+
+    pub const ft = ForeignType.genHelper(Self, display, equals);
+
+    data: ArrayList(Value),
+
+    pub fn display(vm: *VM, p: ForeignPtr) void {
+        const vec = p.cast(Self);
+        std.debug.print("v[ ", .{});
+        for (vec.data.items) |v| {
+            v.nicePrint(vm);
+            std.debug.print(" ", .{});
+        }
+        std.debug.print("]", .{});
+    }
+
+    pub fn equals(vm: *VM, p1: ForeignPtr, p2: ForeignPtr) bool {
+        return false;
+    }
+};
 
 pub fn f_make_vec(vm: *VM) EvalError!void {
-    var arr = try vm.allocator.create(std.ArrayList(Value));
-    arr.* = std.ArrayList(Value).init(vm.allocator);
-    try vm.stack.push(.{ .Vec = arr });
+    var obj = try vm.allocator.create(Vec);
+    obj.data = ArrayList(Value).init(vm.allocator);
+    try vm.stack.push(Vec.ft.make(obj));
+}
+
+pub fn f_vec_free(vm: *VM) EvalError!void {
+    var ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
+    ptr.data.deinit();
+    vm.allocator.destroy(ptr);
 }
 
 pub fn f_vec_push(vm: *VM) EvalError!void {
     const val = try vm.stack.pop();
-    var arr = try vm.stack.peek();
-    try arr.assertType(&[_]ValTag{.Vec});
-    try arr.Vec.append(val);
+    var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.peek());
+    try vec_ptr.data.append(val);
 }
 
 pub fn f_vec_push_ct(vm: *VM) EvalError!void {
@@ -253,55 +281,16 @@ pub fn f_vec_push_ct(vm: *VM) EvalError!void {
 
     // TODO ct has to be > 0
     const ct = @intCast(usize, ct_.Int);
-    var arr = (try vm.stack.index(ct)).*;
-    try arr.assertType(&[_]ValTag{.Vec});
 
-    try arr.Vec.appendSlice(vm.stack.data.items[(vm.stack.data.items.len - ct)..vm.stack.data.items.len]);
+    var vec_ptr = try Vec.ft.assertValueIsType((try vm.stack.index(ct)).*);
+    try vec_ptr.data.appendSlice(vm.stack.data.items[(vm.stack.data.items.len - ct)..vm.stack.data.items.len]);
     vm.stack.data.items.len -= ct;
 }
 
 pub fn f_vec_get(vm: *VM) EvalError!void {
     const idx = try vm.stack.pop();
-    var arr = try vm.stack.pop();
-    try arr.assertType(&[_]ValTag{.Vec});
-    try vm.stack.push(arr.Vec.items[@intCast(usize, idx.Int)]);
-}
-
-// test ===
-
-pub const T = struct {
-    const Self = @This();
-
-    pub const ft = ForeignType.genHelper(Self);
-
-    a: f32,
-
-    pub fn equals(vm: *VM, p1: TypedPtr, p2: TypedPtr) bool {
-        return true;
-    }
-};
-
-pub fn f_typ_make(vm: *VM) EvalError!void {
-    return T.ft.make(vm);
-}
-
-pub fn f_typ_free(vm: *VM) EvalError!void {
-    return T.ft.free(vm);
-}
-
-pub fn f_typ_get_a(vm: *VM) EvalError!void {
-    return T.ft.get(vm, "Float", "a");
-}
-
-pub fn f_typ_set_a(vm: *VM) EvalError!void {
-    const set_to = try vm.stack.pop();
-    try set_to.assertType(&[_]ValTag{ .Float, .Int });
-    const set: Value = switch (set_to) {
-        .Float => set_to,
-        .Int => |i| .{ .Float = @intToFloat(f32, i) },
-        else => unreachable,
-    };
-    return T.ft.set(vm, "Float", "a", set);
+    var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
+    try vm.stack.push(vec_ptr.data.items[@intCast(usize, idx.Int)]);
 }
 
 // =====
@@ -310,22 +299,6 @@ pub const builtins = [_]struct {
     name: []const u8,
     func: ForeignFn,
 }{
-    .{
-        .name = "<typ>",
-        .func = f_typ_make,
-    },
-    .{
-        .name = "typ-free",
-        .func = f_typ_free,
-    },
-    .{
-        .name = "typ-a",
-        .func = f_typ_get_a,
-    },
-    .{
-        .name = "typ-a!",
-        .func = f_typ_set_a,
-    },
     .{
         .name = "panic",
         .func = f_panic,
@@ -402,6 +375,10 @@ pub const builtins = [_]struct {
 
     .{
         .name = "<vec>",
+        .func = f_make_vec,
+    },
+    .{
+        .name = "vec-free",
         .func = f_make_vec,
     },
     .{

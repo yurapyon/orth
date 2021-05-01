@@ -46,7 +46,7 @@ pub fn main() !void {
         };
     }
 
-    _ = try builtins.T.ft.addToVM(&vm);
+    _ = try builtins.Vec.ft.addToVM(&vm);
 
     vm.eval(literals.items) catch |err| {
         switch (err) {

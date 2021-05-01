@@ -11,19 +11,20 @@ const StringHashMap = std.StringHashMap;
 //   because symbols are what you use to name functions and stuff
 
 // TODO locals
+
 // records
+//   need to be significantly different than foreign ptrs
+//   foreign ptrs are pretty easy to use to idk
 
 // TODO memoize words so they dont have to be looked up over and over?
 
 // char type? could just use ints
 // hex ints
-// int parser
-// float parser
 
-// vecs and maps, etc can be typed pointers
-// rather than being built into Value
+// better int parser
+// better float parser
 
-// just use a numer type rather than floats and ints?
+// just use a number type rather than floats and ints?
 
 // errors ===
 
@@ -256,25 +257,30 @@ pub const ForeignFnPtr = struct {
     func: ForeignFn,
 };
 
-// TODO maybe rename to ForeignPtr
-pub const TypedPtr = struct {
+pub const ForeignPtr = struct {
+    const Self = @This();
     pub const Ptr = opaque {};
+
     ty: usize,
     ptr: *Ptr,
+
+    pub fn cast(self: Self, comptime T: type) *T {
+        return @ptrCast(*T, @alignCast(@alignOf(T), self.ptr));
+    }
 };
 
 pub const ForeignType = struct {
     const Self = @This();
 
     name: []const u8,
-    display_fn: fn (*VM, TypedPtr) void = defaultDisplay,
-    equals_fn: fn (*VM, TypedPtr, TypedPtr) bool = defaultEquals,
+    display_fn: fn (*VM, ForeignPtr) void,
+    equals_fn: fn (*VM, ForeignPtr, ForeignPtr) bool,
 
-    // TODO think abt doing genGetter genSetter etc
-    //   return a struct{fn setter()void}.setter
-    //   type checking is harder though
-
-    pub fn genHelper(comptime T: type) type {
+    pub fn genHelper(
+        comptime T: type,
+        comptime display_fn: ?@TypeOf(defaultDisplay),
+        comptime equals_fn: ?@TypeOf(defaultEquals),
+    ) type {
         const name_str = @typeName(T);
 
         return struct {
@@ -282,72 +288,62 @@ pub const ForeignType = struct {
 
             var type_id: usize = undefined;
 
+            // TODO rename or move somewhere else somehow?
             pub fn addToVM(vm: *VM) Allocator.Error!usize {
-                Self_.type_id = try vm.defineForeignType(.{
+                const idx = vm.type_table.items.len;
+                try vm.type_table.append(.{
                     .name = name_str,
-                    // TODO
-                    // .display_fn
+                    .display_fn = display_fn orelse defaultDisplay,
+                    .equals_fn = equals_fn orelse defaultEquals,
                 });
-                return Self_.type_id;
+                Self_.type_id = idx;
+                return idx;
             }
 
-            pub fn make(vm: *VM) EvalError!void {
-                var obj = try vm.allocator.create(T);
-                try vm.stack.push(.{
-                    .TypedPtr = .{
-                        .ty = Self_.type_id,
-                        .ptr = @ptrCast(*TypedPtr.Ptr, obj),
-                    },
-                });
-            }
+            pub fn assertValueIsType(val: Value) EvalError!*T {
+                try val.assertType(&[_]@TagType(Value){.ForeignPtr});
 
-            pub fn free(vm: *VM) EvalError!void {
-                const val = try vm.stack.pop();
-                try val.assertType(&[_]@TagType(Value){.TypedPtr});
-
-                if (val.TypedPtr.ty != Self_.type_id) {
+                if (val.ForeignPtr.ty != Self_.type_id) {
                     return error.TypeError;
                 } else {
-                    const t_ptr = @ptrCast(*T, @alignCast(@alignOf(T), val.TypedPtr.ptr));
-                    vm.allocator.destroy(t_ptr);
+                    return val.ForeignPtr.cast(T);
                 }
+            }
+
+            pub fn make(obj: *T) Value {
+                return .{
+                    .ForeignPtr = .{
+                        .ty = Self_.type_id,
+                        .ptr = @ptrCast(*ForeignPtr.Ptr, obj),
+                    },
+                };
             }
 
             pub fn get(vm: *VM, comptime ty: []const u8, comptime field: []const u8) EvalError!void {
                 const val = try vm.stack.pop();
-                try val.assertType(&[_]@TagType(Value){.TypedPtr});
-
-                if (val.TypedPtr.ty != Self_.type_id) {
-                    return error.TypeError;
-                } else {
-                    const t_ptr = @ptrCast(*T, @alignCast(@alignOf(T), val.TypedPtr.ptr));
-                    try vm.stack.push(@unionInit(Value, ty, @field(t_ptr, field)));
-                }
+                const ptr = try Self_.assertValueIsType(val);
+                try vm.stack.push(@unionInit(Value, ty, @field(ptr, field)));
             }
 
-            pub fn set(vm: *VM, comptime ty: []const u8, comptime field: []const u8, set_to: Value) EvalError!void {
+            pub fn set(
+                vm: *VM,
+                comptime ty: []const u8,
+                comptime field: []const u8,
+                set_to: Value,
+            ) EvalError!void {
                 const val = try vm.stack.peek();
-                try val.assertType(&[_]@TagType(Value){.TypedPtr});
-                if (val.TypedPtr.ty != Self_.type_id) {
-                    return error.TypeError;
-                } else {
-                    const t_ptr = @ptrCast(*T, @alignCast(@alignOf(T), val.TypedPtr.ptr));
-                    @field(t_ptr, field) = @field(set_to, ty);
-                }
+                const ptr = try Self_.assertValueIsType(val);
+                @field(ptr, field) = @field(set_to, ty);
             }
         };
     }
 
-    pub fn defaultDisplay(vm: *VM, ptr: TypedPtr) void {
-        std.debug.print("*<{} {}>", .{ vm.string_table.items[ptr.ty], ptr.ptr });
+    pub fn defaultDisplay(vm: *VM, p: ForeignPtr) void {
+        std.debug.print("*<{} {}>", .{ vm.type_table.items[p.ty].name, p.ptr });
     }
 
-    pub fn defaultEquals(vm: *VM, p1: TypedPtr, p2: TypedPtr) bool {
-        // TODO
-        // note, at this point, vm shouldve already checked obvious equality factors
-        //   like that the types are the same
-        // defaultEquals should return wether or not the pointers are the same
-        return false;
+    pub fn defaultEquals(vm: *VM, p1: ForeignPtr, p2: ForeignPtr) bool {
+        return p1.ptr == p2.ptr;
     }
 };
 
@@ -370,16 +366,16 @@ pub const Value = union(enum) {
     Float: f32,
     Boolean: bool,
     Symbol: usize,
+    // TODO make this a *ArrayList
     Quotation: ArrayList(Literal),
     ForeignFnPtr: ForeignFnPtr,
-    TypedPtr: TypedPtr,
-    Vec: *ArrayList(Value),
+    ForeignPtr: ForeignPtr,
 
     // String: ArrayList(u8),
-    // TODO make this a *ArrayList
     // Record: Record,
 
-    // TODO dont take a slice here
+    // note: i would like to take a slice of accepted types here
+    //   doesnt work in 0.7.0 but does work in 0.8.0 master as of 5/1/21
     pub fn assertType(self: Self, comptime accepted_types: []const @TagType(Value)) EvalError!void {
         var is_ok = false;
         for (accepted_types) |ty| {
@@ -390,7 +386,8 @@ pub const Value = union(enum) {
         if (!is_ok) return error.TypeError;
     }
 
-    pub fn equals(self: Self, other: Self) bool {
+    // TODO maybe rearange and make equals and nicePrint functions in VM rather than Value
+    pub fn equals(self: Self, vm: *VM, other: Self) bool {
         if (@as(@TagType(Self), self) == @as(@TagType(Self), other)) {
             return switch (self) {
                 .Int => |val| val == other.Int,
@@ -399,9 +396,10 @@ pub const Value = union(enum) {
                 .Symbol => |val| val == other.Symbol,
                 .Quotation => false,
                 .ForeignFnPtr => false,
-                // TODO
-                .TypedPtr => false,
-                .Vec => false,
+                .ForeignPtr => |ptr| {
+                    return ptr.ty == other.ForeignPtr.ty and
+                        vm.type_table.items[ptr.ty].equals_fn(vm, self.ForeignPtr, other.ForeignPtr);
+                },
             };
         } else {
             return false;
@@ -409,8 +407,6 @@ pub const Value = union(enum) {
     }
 
     // TODO dont print, return a string
-    // if type is a typed ptr, look for a print function
-    //    or, dont do this and just have print funcitons be part of the lib the ptr is from
     pub fn nicePrint(self: Self, vm: *VM) void {
         switch (self) {
             .Int => |val| std.debug.print("{}i", .{val}),
@@ -429,19 +425,7 @@ pub const Value = union(enum) {
                 std.debug.print("}}", .{});
             },
             .ForeignFnPtr => |val| std.debug.print("fn({})", .{vm.string_table.items[val.name]}),
-
-            // TODO
-            .TypedPtr => |tp| {
-                std.debug.print("*<{} {}>", .{ vm.type_table.items[tp.ty].name, tp.ptr });
-            },
-            .Vec => |val| {
-                std.debug.print("v[ ", .{});
-                for (val.items) |v| {
-                    v.nicePrint(vm);
-                    std.debug.print(" ", .{});
-                }
-                std.debug.print("]", .{});
-            },
+            .ForeignPtr => |ptr| vm.type_table.items[ptr.ty].display_fn(vm, ptr),
         }
     }
 };
@@ -547,13 +531,7 @@ pub const VM = struct {
     }
 
     // TODO
-    // fn define()
-
-    pub fn defineForeignType(self: *Self, ty: ForeignType) Allocator.Error!usize {
-        const idx = self.type_table.items.len;
-        try self.type_table.append(ty);
-        return idx;
-    }
+    // fn defineWord()
 
     pub fn evaluateValue(self: *Self, val: Value) EvalError!void {
         switch (val) {
