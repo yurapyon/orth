@@ -16,6 +16,14 @@ const StringHashMap = std.StringHashMap;
 // multiline strings
 // multiline comments?
 // array literals?
+// locals
+//   should you look back out of your current 'scope'?
+// return stack
+//   could be used instead of locals
+//   rename to alt_stack or somethign
+
+// handle recursion better
+//   right now it seems theres a limit
 
 // TODO QOL
 // better int parser
@@ -40,6 +48,7 @@ const StringHashMap = std.StringHashMap;
 //   locals memory management
 //   different way of knowing where to restore locals to
 //     so ForeignFns can do stuff with locals
+// comments are ( ) ?
 
 // errors ===
 
@@ -65,6 +74,8 @@ pub const EvalError = error{
     WordNotFound,
     QuotationUnderflow,
     TypeError,
+    DivideByZero,
+    NegativeDenominator,
     Panic,
     InternalError,
 } || StackError || Allocator.Error;
@@ -144,6 +155,8 @@ pub fn Stack(comptime T: type) type {
             return self.index(0);
         }
 
+        // TODO index is supposed to be used
+        //  for stuff like swap and rot
         pub fn index(self: *Self, idx: usize) StackError!T {
             if (idx >= self.data.items.len) {
                 return error.OutOfBounds;
@@ -157,7 +170,9 @@ pub fn Stack(comptime T: type) type {
     };
 }
 
-// toeknize with column number/ word number
+// TODO
+//   tokenize with column number/word number
+//   usze line_num in parser code
 pub const Token = struct {
     pub const Type = enum {
         String,
@@ -220,14 +235,12 @@ pub fn ForeignTypeDef(
             };
         }
 
-        pub fn assertValueIsType(val: Value) EvalError!*T {
-            if (val != .ForeignPtr or
-                val.ForeignPtr.ty != type_id)
-            {
-                return error.TypeError;
-            } else {
-                return val.ForeignPtr.cast(T);
-            }
+        fn defaultDisplay(vm: *VM, p: ForeignPtr) void {
+            std.debug.print("*<{} {}>", .{ vm.type_table.items[p.ty].name, p.ptr });
+        }
+
+        fn defaultEquals(vm: *VM, p1: ForeignPtr, p2: ForeignPtr) bool {
+            return p1.ptr == p2.ptr;
         }
 
         pub fn makePtr(obj: *T) Value {
@@ -260,12 +273,14 @@ pub fn ForeignTypeDef(
             @field(ptr, field) = @field(set_to, ty);
         }
 
-        fn defaultDisplay(vm: *VM, p: ForeignPtr) void {
-            std.debug.print("*<{} {}>", .{ vm.type_table.items[p.ty].name, p.ptr });
-        }
-
-        fn defaultEquals(vm: *VM, p1: ForeignPtr, p2: ForeignPtr) bool {
-            return p1.ptr == p2.ptr;
+        pub fn assertValueIsType(val: Value) EvalError!*T {
+            if (val != .ForeignPtr or
+                val.ForeignPtr.ty != type_id)
+            {
+                return error.TypeError;
+            } else {
+                return val.ForeignPtr.cast(T);
+            }
         }
     };
 }
@@ -280,6 +295,7 @@ pub const Value = union(enum) {
     Int: i32,
     Float: f32,
     Boolean: bool,
+    Sentinel,
     String: usize,
     Symbol: usize,
     Quotation: usize,
@@ -303,6 +319,7 @@ pub const VM = struct {
     string_table: ArrayList(Cow(u8)),
     quotation_table: ArrayList(Cow(Literal)),
     stack: Stack(Value),
+    return_stack: Stack(Value),
     locals: Stack(Local),
 
     pub fn init(allocator: *Allocator) Self {
@@ -315,6 +332,7 @@ pub const VM = struct {
             .string_table = ArrayList(Cow(u8)).init(allocator),
             .quotation_table = ArrayList(Cow(Literal)).init(allocator),
             .stack = Stack(Value).init(allocator),
+            .return_stack = Stack(Value).init(allocator),
             .locals = Stack(Local).init(allocator),
         };
         return ret;
@@ -322,6 +340,7 @@ pub const VM = struct {
 
     pub fn deinit(self: *Self) void {
         self.locals.deinit();
+        self.return_stack.deinit();
         self.stack.deinit();
         for (self.quotation_table.items) |*cow| {
             cow.deinit();
@@ -503,10 +522,10 @@ pub const VM = struct {
                         try ret.append(.{ .Int = i });
                     } else if (try_parse_float and (fl != null)) {
                         try ret.append(.{ .Float = fl.? });
-                    } else if (std.mem.eql(u8, token.str, "#t")) {
-                        try ret.append(.{ .Boolean = true });
-                    } else if (std.mem.eql(u8, token.str, "#f")) {
-                        try ret.append(.{ .Boolean = false });
+                        //                     } else if (std.mem.eql(u8, token.str, "#t")) {
+                        //                         try ret.append(.{ .Boolean = true });
+                        //                     } else if (std.mem.eql(u8, token.str, "#f")) {
+                        //                         try ret.append(.{ .Boolean = false });
                     } else if (std.mem.eql(u8, token.str, "{")) {
                         try ret.append(.{ .QuoteOpen = {} });
                     } else if (std.mem.eql(u8, token.str, "}")) {
@@ -531,6 +550,7 @@ pub const VM = struct {
                 const str = if (val) "#t" else "#f";
                 std.debug.print("{s}", .{str});
             },
+            .Sentinel => std.debug.print("#sentinel", .{}),
             .Symbol => |val| std.debug.print(":{}", .{self.symbol_table.items[val]}),
             .String => |val| std.debug.print("\"{}\"", .{self.string_table.items[val].get()}),
             .Quotation => |val| {
@@ -546,29 +566,6 @@ pub const VM = struct {
         }
     }
 
-    // TODO this is kindof a weird name
-    pub fn equalsValue(self: *Self, a: Value, b: Value) bool {
-        if (@as(@TagType(Value), a) == @as(@TagType(Value), b)) {
-            return switch (a) {
-                .Int => |val| val == b.Int,
-                .Float => |val| val == b.Float,
-                .Boolean => |val| val == b.Boolean,
-                .Symbol => |val| val == b.Symbol,
-                // TODO
-                .String => false,
-                .Quotation => false,
-                .ForeignFnPtr => false,
-                .ForeignPtr => |ptr| {
-                    // TODO maybe move the type check into defaultEquals
-                    return ptr.ty == b.ForeignPtr.ty and
-                        self.type_table.items[ptr.ty].equals_fn(self, a.ForeignPtr, b.ForeignPtr);
-                },
-            };
-        } else {
-            return false;
-        }
-    }
-
     pub fn defineForeignType(self: *Self, comptime T: type) Allocator.Error!usize {
         const idx = self.type_table.items.len;
         try self.type_table.append(T.foreignType());
@@ -576,26 +573,29 @@ pub const VM = struct {
         return idx;
     }
 
-    // TODO
-    // fn defineWord()
+    pub fn defineWord(self: *Self, name: []const u8, value: Value) Allocator.Error!void {
+        const idx = try self.internSymbol(name);
+        self.word_table.items[idx] = value;
+    }
 
     pub fn evaluateValue(self: *Self, val: Value) EvalError!void {
         switch (val) {
-            .Quotation => |id| {
-                try self.eval(self.quotation_table.items[id].get());
-            },
-            .ForeignFnPtr => |fp| {
-                try fp.func(self);
-            },
-            else => {
-                try self.stack.push(val);
-            },
+            .Quotation => |id| try self.eval(self.quotation_table.items[id].get()),
+            .ForeignFnPtr => |fp| try fp.func(self),
+            else => try self.stack.push(val),
         }
     }
 
-    // wordLookup needs to be out here to account for
+    // wordLookup needs to be out here to account for locals
 
     pub fn eval(self: *Self, literals: []const Literal) EvalError!void {
+        // TODO QOL
+        // could do quoations differently
+        //   { inc quotation_level
+        //   } back tracks to find most recent {
+        //     creates []Literal using that info
+        //       rather than using q_start and q_ct
+        //   need to use a while loop insteda of for loop i think
         var quotation_level: usize = 0;
         var q_start: [*]const Literal = undefined;
         var q_ct: usize = 0;
@@ -666,9 +666,7 @@ pub const VM = struct {
                     }
                 },
                 .Symbol => |idx| try self.stack.push(.{ .Symbol = idx }),
-                .QuoteOpen, .QuoteClose => {
-                    return error.InternalError;
-                },
+                .QuoteOpen, .QuoteClose => return error.InternalError,
             }
         }
 

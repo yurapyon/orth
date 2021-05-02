@@ -42,6 +42,9 @@ pub fn something(allocator: *Allocator) !void {
         // std.debug.print("\n", .{});
     }
 
+    try vm.defineWord("#t", .{ .Boolean = true });
+    try vm.defineWord("#f", .{ .Boolean = true });
+    try vm.defineWord("#sentinel", .{ .Sentinel = {} });
     for (builtins.builtins) |bi| {
         const idx = try vm.internSymbol(bi.name);
         vm.word_table.items[idx] = lib.Value{

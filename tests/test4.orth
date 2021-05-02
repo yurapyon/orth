@@ -1,0 +1,58 @@
+{
+
+{
+5 eq? { :five } { :not-five } if
+} :=5? @
+
+{
+  :a @local
+  :b @local
+  a =5?
+  b =5?
+} :fn2 @
+
+{
+  .stack
+  :a @local
+  :b @local
+  .stack
+  a
+  b
+  .stack
+  fn2
+} :fn @
+
+5 6 fn
+.stack
+
+} drop
+
+; ( cond val -- )
+{ { } if } :when @
+{ { } swap if } :unless @
+{ bi^ and } :both? @
+{ bi^ or } :either? @
+
+; 5 5 { + } { - } 2bi
+; 5 5 { + } { - } { eq? } 2tri
+; 5 6 8 { 1 + } tri^
+
+{
+#t #f { and } { or } 2bi drop drop
+.stack
+} drop
+
+{
+5 5 { 6 < } both?
+5 6 { 6 < } both?
+6 6 { 6 < } both?
+
+5 5 { 5 <= } either?
+5 6 { 5 <= } either?
+6 6 { 5 <= } either?
+
+.stack
+} drop
+
+10 5 /
+.stack

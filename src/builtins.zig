@@ -37,6 +37,7 @@ pub fn f_panic(vm: *VM) EvalError!void {
     return error.Panic;
 }
 
+// TODO use defineWord
 pub fn f_define(vm: *VM) EvalError!void {
     const name = try vm.stack.pop();
     if (name != .Symbol) return error.TypeError;
@@ -96,28 +97,19 @@ pub fn f_print_top(vm: *VM) EvalError!void {
 }
 
 // math ===
-// TODO these functions can be cleaned up somehow
 
 pub fn f_plus(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
     switch (b) {
         .Int => |bi| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Int = ai + bi });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Float = af + @intToFloat(f32, bi) });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Int = ai + bi }),
+            .Float => |af| try vm.stack.push(.{ .Float = af + @intToFloat(f32, bi) }),
             else => return error.TypeError,
         },
         .Float => |bf| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Float = @intToFloat(f32, ai) + bf });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Float = af + bf });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Float = @intToFloat(f32, ai) + bf }),
+            .Float => |af| try vm.stack.push(.{ .Float = af + bf }),
             else => return error.TypeError,
         },
         else => return error.TypeError,
@@ -129,21 +121,13 @@ pub fn f_minus(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     switch (b) {
         .Int => |bi| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Int = ai - bi });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Float = af - @intToFloat(f32, bi) });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Int = ai - bi }),
+            .Float => |af| try vm.stack.push(.{ .Float = af - @intToFloat(f32, bi) }),
             else => return error.TypeError,
         },
         .Float => |bf| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Float = @intToFloat(f32, ai) - bf });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Float = af - bf });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Float = @intToFloat(f32, ai) - bf }),
+            .Float => |af| try vm.stack.push(.{ .Float = af - bf }),
             else => return error.TypeError,
         },
         else => return error.TypeError,
@@ -155,21 +139,13 @@ pub fn f_times(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     switch (b) {
         .Int => |bi| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Int = ai * bi });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Float = af * @intToFloat(f32, bi) });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Int = ai * bi }),
+            .Float => |af| try vm.stack.push(.{ .Float = af * @intToFloat(f32, bi) }),
             else => return error.TypeError,
         },
         .Float => |bf| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Float = @intToFloat(f32, ai) * bf });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Float = af * bf });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Float = @intToFloat(f32, ai) * bf }),
+            .Float => |af| try vm.stack.push(.{ .Float = af * bf }),
             else => return error.TypeError,
         },
         else => return error.TypeError,
@@ -180,24 +156,47 @@ pub fn f_divide(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
     switch (b) {
-        .Int => |bi| switch (a) {
-            .Int => |ai| {
-                // TODO use divFloor?
-                try vm.stack.push(.{ .Int = @divFloor(ai, bi) });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Float = af / @intToFloat(f32, bi) });
-            },
-            else => return error.TypeError,
+        .Int => |bi| {
+            if (bi == 0) return error.DivideByZero;
+            switch (a) {
+                .Int => |ai| try vm.stack.push(.{ .Int = @divTrunc(ai, bi) }),
+                .Float => |af| try vm.stack.push(.{ .Float = af / @intToFloat(f32, bi) }),
+                else => return error.TypeError,
+            }
         },
-        .Float => |bf| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Float = @intToFloat(f32, ai) / bf });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Float = af / bf });
-            },
-            else => return error.TypeError,
+        .Float => |bf| {
+            if (bf == 0) return error.DivideByZero;
+            switch (a) {
+                .Int => |ai| try vm.stack.push(.{ .Float = @intToFloat(f32, ai) / bf }),
+                .Float => |af| try vm.stack.push(.{ .Float = af / bf }),
+                else => return error.TypeError,
+            }
+        },
+        else => return error.TypeError,
+    }
+}
+
+pub fn f_mod(vm: *VM) EvalError!void {
+    const b = try vm.stack.pop();
+    const a = try vm.stack.pop();
+    switch (b) {
+        .Int => |bi| {
+            if (bi == 0) return error.DivideByZero;
+            if (bi < 0) return error.NegativeDenominator;
+            switch (a) {
+                .Int => |ai| try vm.stack.push(.{ .Int = @mod(ai, bi) }),
+                .Float => |af| try vm.stack.push(.{ .Float = @mod(af, @intToFloat(f32, bi)) }),
+                else => return error.TypeError,
+            }
+        },
+        .Float => |bf| {
+            if (bf == 0) return error.DivideByZero;
+            if (bf < 0) return error.NegativeDenominator;
+            switch (a) {
+                .Int => |ai| try vm.stack.push(.{ .Float = @mod(@intToFloat(f32, ai), bf) }),
+                .Float => |af| try vm.stack.push(.{ .Float = @mod(af, bf) }),
+                else => return error.TypeError,
+            }
         },
         else => return error.TypeError,
     }
@@ -208,21 +207,13 @@ pub fn f_lt(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     switch (b) {
         .Int => |bi| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Boolean = ai < bi });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Boolean = af < @intToFloat(f32, bi) });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Boolean = ai < bi }),
+            .Float => |af| try vm.stack.push(.{ .Boolean = af < @intToFloat(f32, bi) }),
             else => return error.TypeError,
         },
         .Float => |bf| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) < bf });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Boolean = af < bf });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) < bf }),
+            .Float => |af| try vm.stack.push(.{ .Boolean = af < bf }),
             else => return error.TypeError,
         },
         else => return error.TypeError,
@@ -234,21 +225,13 @@ pub fn f_lte(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     switch (b) {
         .Int => |bi| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Boolean = ai <= bi });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Boolean = af <= @intToFloat(f32, bi) });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Boolean = ai <= bi }),
+            .Float => |af| try vm.stack.push(.{ .Boolean = af <= @intToFloat(f32, bi) }),
             else => return error.TypeError,
         },
         .Float => |bf| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) <= bf });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Boolean = af <= bf });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) <= bf }),
+            .Float => |af| try vm.stack.push(.{ .Boolean = af <= bf }),
             else => return error.TypeError,
         },
         else => return error.TypeError,
@@ -260,21 +243,13 @@ pub fn f_gt(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     switch (b) {
         .Int => |bi| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Boolean = ai > bi });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Boolean = af > @intToFloat(f32, bi) });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Boolean = ai > bi }),
+            .Float => |af| try vm.stack.push(.{ .Boolean = af > @intToFloat(f32, bi) }),
             else => return error.TypeError,
         },
         .Float => |bf| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) > bf });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Boolean = af > bf });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) > bf }),
+            .Float => |af| try vm.stack.push(.{ .Boolean = af > bf }),
             else => return error.TypeError,
         },
         else => return error.TypeError,
@@ -286,21 +261,13 @@ pub fn f_gte(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     switch (b) {
         .Int => |bi| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Boolean = ai >= bi });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Boolean = af >= @intToFloat(f32, bi) });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Boolean = ai >= bi }),
+            .Float => |af| try vm.stack.push(.{ .Boolean = af >= @intToFloat(f32, bi) }),
             else => return error.TypeError,
         },
         .Float => |bf| switch (a) {
-            .Int => |ai| {
-                try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) >= bf });
-            },
-            .Float => |af| {
-                try vm.stack.push(.{ .Boolean = af >= bf });
-            },
+            .Int => |ai| try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) >= bf }),
+            .Float => |af| try vm.stack.push(.{ .Boolean = af >= bf }),
             else => return error.TypeError,
         },
         else => return error.TypeError,
@@ -330,7 +297,20 @@ pub fn f_if(vm: *VM) EvalError!void {
 pub fn f_equal(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     const b = try vm.stack.pop();
-    try vm.stack.push(.{ .Boolean = vm.equalsValue(a, b) });
+    const are_equal = if (@as(@TagType(Value), a) == b) switch (a) {
+        .Int => |val| val == b.Int,
+        .Float => |val| val == b.Float,
+        .Boolean => |val| val == b.Boolean,
+        .Sentinel => true,
+        .Symbol => |val| val == b.Symbol,
+        // TODO
+        .String => false,
+        .Quotation => false,
+        .ForeignFnPtr => false,
+        .ForeignPtr => |ptr| ptr.ty == b.ForeignPtr.ty and
+            vm.type_table.items[ptr.ty].equals_fn(vm, a.ForeignPtr, b.ForeignPtr),
+    } else false;
+    try vm.stack.push(.{ .Boolean = are_equal });
 }
 
 // TODO maybe make 'and' and 'or' work like lua
@@ -356,6 +336,20 @@ pub fn f_not(vm: *VM) EvalError!void {
     try vm.stack.push(.{ .Boolean = !b.Boolean });
 }
 
+// return stack ===
+
+pub fn f_to_r(vm: *VM) EvalError!void {
+    try vm.return_stack.push(try vm.stack.pop());
+}
+
+pub fn f_from_r(vm: *VM) EvalError!void {
+    try vm.stack.push(try vm.return_stack.pop());
+}
+
+pub fn f_peek_r(vm: *VM) EvalError!void {
+    try vm.stack.push(try vm.return_stack.peek());
+}
+
 // shuffle ===
 
 pub fn f_drop(vm: *VM) EvalError!void {
@@ -367,10 +361,9 @@ pub fn f_dup(vm: *VM) EvalError!void {
 }
 
 pub fn f_swap(vm: *VM) EvalError!void {
-    const a = try vm.stack.pop();
-    const b = try vm.stack.pop();
-    try vm.stack.push(a);
-    try vm.stack.push(b);
+    var slice = vm.stack.data.items;
+    if (slice.len < 2) return error.StackUnderflow;
+    std.mem.swap(Value, &slice[slice.len - 1], &slice[slice.len - 2]);
 }
 
 pub fn f_rot(vm: *VM) EvalError!void {
@@ -544,30 +537,25 @@ pub const Vec = struct {
     }
 
     pub fn _push(vm: *VM) EvalError!void {
+        var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
         const val = try vm.stack.pop();
-        var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.peek());
         try vec_ptr.data.append(val);
     }
 
-    // TODO change order of args to vpush ct?
-    // have it be   ( ... a b c d ct <vec> -- )
-    pub fn _push_ct(vm: *VM) EvalError!void {
-        // TODO assert stack size
-        const ct_ = try vm.stack.pop();
-        if (ct_ != .Int) return error.TypeError;
-
-        // TODO ct has to be > 0
-        const ct = @intCast(usize, ct_.Int);
-
-        var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.index(ct));
-        try vec_ptr.data.appendSlice(vm.stack.data.items[(vm.stack.data.items.len - ct)..vm.stack.data.items.len]);
-        vm.stack.data.items.len -= ct;
+    pub fn _get(vm: *VM) EvalError!void {
+        var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
+        const idx = try vm.stack.pop();
+        try vm.stack.push(vec_ptr.data.items[@intCast(usize, idx.Int)]);
     }
 
-    pub fn _get(vm: *VM) EvalError!void {
-        const idx = try vm.stack.pop();
+    pub fn _len(vm: *VM) EvalError!void {
         var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
-        try vm.stack.push(vec_ptr.data.items[@intCast(usize, idx.Int)]);
+        try vm.stack.push(.{ .Int = @intCast(i32, vec_ptr.data.items.len) });
+    }
+
+    pub fn _reverse_in_place(vm: *VM) EvalError!void {
+        var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
+        std.mem.reverse(Value, vec_ptr.data.items);
     }
 };
 
@@ -680,6 +668,10 @@ pub const builtins = [_]struct {
         .func = f_divide,
     },
     .{
+        .name = "mod",
+        .func = f_mod,
+    },
+    .{
         .name = "<",
         .func = f_lt,
     },
@@ -701,7 +693,7 @@ pub const builtins = [_]struct {
         .func = f_if,
     },
     .{
-        .name = "eq?",
+        .name = "=",
         .func = f_equal,
     },
     .{
@@ -718,6 +710,19 @@ pub const builtins = [_]struct {
     },
 
     .{
+        .name = ">R",
+        .func = f_to_r,
+    },
+    .{
+        .name = "<R",
+        .func = f_from_r,
+    },
+    .{
+        .name = ".R",
+        .func = f_peek_r,
+    },
+
+    .{
         .name = "drop",
         .func = f_drop,
     },
@@ -730,11 +735,11 @@ pub const builtins = [_]struct {
         .func = f_swap,
     },
     .{
-        .name = "rot",
+        .name = "rot<",
         .func = f_rot,
     },
     .{
-        .name = "-rot",
+        .name = "rot>",
         .func = f_neg_rot,
     },
     .{
@@ -792,12 +797,16 @@ pub const builtins = [_]struct {
         .func = Vec._push,
     },
     .{
-        .name = "vpush!,ct",
-        .func = Vec._push_ct,
-    },
-    .{
         .name = "vget",
         .func = Vec._get,
+    },
+    .{
+        .name = "vlen",
+        .func = Vec._len,
+    },
+    .{
+        .name = "vreverse!",
+        .func = Vec._reverse_in_place,
     },
 
     .{

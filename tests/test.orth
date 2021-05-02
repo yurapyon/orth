@@ -1,53 +1,113 @@
-{
+{ . drop } :print @
+{ swap mget } :mval @
+
+;
+
+{ #sentinel } :[ @
+
+{ dup #sentinel = { drop <R } { .R vpush! ]vec' } if
+} :]vec' @
+
+{ ; ( #sentinel ... a b c -- vec )
+<vec> >R ]vec' { vreverse! } keep
+} :]vec @
+
+{ dup #sentinel = { drop <R } { swap .R mset! ]map' } if
+} :]map' @
+
+{ ; ( #sentinel ... k1 v1 k2 v2 -- map )
+<map> >R ]map'
+} :]map @
+
+;
 
 {
-5 eq? { :five } { :not-five } if
-} :=5? @
+[ :r 1 :g 1 :b 1 :a 1 ]map
+} :<color>,white @
 
 {
-  :a @local
-  :b @local
-  a =5?
-  b =5?
-} :fn2 @
+[ :r 0 :g 0 :b 0 :a 0 ]map
+} :<color>,black @
 
-{
-  .stack
-  :a @local
-  :b @local
-  .stack
-  a
-  b
-  .stack
-  fn2
-} :fn @
+{ ; ( c1 c2 -- c3 )
+:b @local
+:a @local
+[ :r a b { :r swap mget } bi^ +
+  :g a b { :g swap mget } bi^ +
+  :b a b { :b swap mget } bi^ +
+  :a a b { :a swap mget } bi^ +
+]map
+} :color+ @
 
-5 6 fn
+<color>,white
+<color>,white
+color+
 .stack
+
+{
+
+;
+
+{ ; ( min max val -- wrapped )
+:val @local
+:max @local
+:min @local
+val min -
+max min -
+mod min +
+} :wrap @
+
+{ ; ( vec -- anim )
+<map> >R
+:data .R mset!
+0 :at .R mset!
+<R
+} :<anim> @
+
+{ ; (anim -- )
+  :data swap { mget <vec>,free } keep
+  <map>,free
+} :<anim>,free @
+
+{ ; ( anim -- val )
+{ :at swap mget } { :data swap mget } bi
+vget
+} :anim-peek @
+
+{ ; ( adv anim -- )
+>R
+:at .R mget +
+0
+:data .R mget vlen
+rot< wrap
+:at <R mset!
+} :anim-advance! @
+
+{
+1 swap { anim-advance! } keep anim-peek
+} :anim-next! @
+
+{
+-1 swap { anim-advance! } keep anim-peek
+} :anim-prev! @
+
+[ 1 2 3 ]vec <anim> :a @
+
+[ :a 5
+  :b 6 ]map . drop
+
+a { anim-next! print } keep
+{ anim-next! print } keep
+{ anim-next! print } keep
+{ anim-next! print } keep
+{ anim-next! print } keep
+.stack
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+
+<anim>,free
 
 } drop
-
-; ( cond val -- )
-{ { } if } :when @
-{ { } swap if } :unless @
-{ bi^ and } :both? @
-{ bi^ or } :either? @
-
-; 5 5 { + } { - } 2bi
-; 5 5 { + } { - } { eq? } 2tri
-; 5 6 8 { 1 + } tri^
-
-{
-#t #f { and } { or } 2bi drop drop
-.stack
-} drop
-
-5 5 { 6 < } both?
-5 6 { 6 < } both?
-6 6 { 6 < } both?
-
-5 5 { 5 <= } either?
-5 6 { 5 <= } either?
-6 6 { 5 <= } either?
-
-.stack
