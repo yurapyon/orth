@@ -7,48 +7,45 @@ const StringHashMap = std.StringHashMap;
 
 //;
 
-// TODO certain things cant be symbols
+// stack 0 is top
+
+// TODO need
+// char type? could just use ints
+//   maybe do them like #\A #\b etc
+//   # is an escaper thing
+// multiline strings
+// multiline comments?
+// array literals?
+
+// TODO QOL
+// better int parser
+//   hex ints
+// better float parser
+// certain things cant be symbols
 //   because symbols are what you use to name functions and stuff
-
-// TODO locals
-
+// vm should have log/print functions or something
+//     so u can control where vm messages get printed
+//     integrate this into nicePrint functions
+//   if nice print is supposed to return strings then idk
+//   nicePrint fns take a Writer
+// think about using reference counting for string quotations and ptrs
+//     being on the stack or in word_table counts as a reference
+//     could do manual memory management but i imagine that would get hard
+//   string and quotation could be a *Cow(_) but, that complicates memory management
+//     would be better if they were Rc(Cow(_))
 // records
 //   need to be significantly different than foreign ptrs
 //   foreign ptrs are pretty easy to use so idk
-
-// TODO
-// char type? could just use ints
-// hex ints
-// maybe do them like #\A #\b etc
-// # is an escaper thing
-
-// better int parser
-// better float parser
-
-// TODO
-// move error_info into the vm
-
-// TODO
-// vm should have log/print functions or something
-//   so u can control where vm messages get printed
-//   integrate this into nicePrint functions
-// if nice print is supposed to return strings then idk
-
-// TODO
-//   values should not have to be 'cloned'
-//     they should all be pointers if they have data somewhere
-// could use reference counting for memory management
-// being on the stack or in word_table counts as a reference
-// could do manual memory management but i imagine that would get hard
-
-// string and quotation could be a *Cow(_) but, that complicates memory management
-//   would be better if they were Rc(Cow(_))
+// locals
+//   locals memory management
+//   different way of knowing where to restore locals to
+//     so ForeignFns can do stuff with locals
 
 // errors ===
 
-pub const error_info = struct {
-    pub var line_number: usize = undefined;
-    pub var word_not_found: []const u8 = undefined;
+pub const ErrorInfo = struct {
+    line_number: usize,
+    word_not_found: []const u8,
 };
 
 pub const StackError = error{
@@ -112,7 +109,6 @@ pub fn Cow(comptime T: type) type {
     };
 }
 
-// TODO have a "fixed stack" that can overflow?
 pub fn Stack(comptime T: type) type {
     return struct {
         const Self = @This();
@@ -145,14 +141,14 @@ pub fn Stack(comptime T: type) type {
         }
 
         pub fn peek(self: *Self) StackError!T {
-            return (try self.index(0)).*;
+            return self.index(0);
         }
 
-        pub fn index(self: *Self, idx: usize) StackError!*T {
+        pub fn index(self: *Self, idx: usize) StackError!T {
             if (idx >= self.data.items.len) {
                 return error.OutOfBounds;
             }
-            return &self.data.items[self.data.items.len - idx - 1];
+            return self.data.items[self.data.items.len - idx - 1];
         }
 
         pub fn clear(self: *Self) void {
@@ -161,7 +157,7 @@ pub fn Stack(comptime T: type) type {
     };
 }
 
-// TODO tokenize with line numbers, for error reporting from parser
+// toeknize with column number/ word number
 pub const Token = struct {
     pub const Type = enum {
         String,
@@ -169,7 +165,8 @@ pub const Token = struct {
     };
 
     ty: Type,
-    str: []const u8
+    str: []const u8,
+    line_num: usize,
 };
 
 pub const Literal = union(enum) {
@@ -295,11 +292,11 @@ pub const Local = struct {
     value: Value,
 };
 
-// main virtual machine
 pub const VM = struct {
     const Self = @This();
 
     allocator: *Allocator,
+    error_info: ErrorInfo,
     symbol_table: ArrayList([]const u8),
     word_table: ArrayList(?Value),
     type_table: ArrayList(ForeignType),
@@ -311,6 +308,7 @@ pub const VM = struct {
     pub fn init(allocator: *Allocator) Self {
         var ret = .{
             .allocator = allocator,
+            .error_info = undefined,
             .symbol_table = ArrayList([]const u8).init(allocator),
             .word_table = ArrayList(?Value).init(allocator),
             .type_table = ArrayList(ForeignType).init(allocator),
@@ -400,11 +398,12 @@ pub const VM = struct {
                         try ret.append(.{
                             .ty = .String,
                             .str = input[(start + 1)..(end + 1)],
+                            .line_num = line_num,
                         });
                         state = .Empty;
                         continue;
                     } else if (ch == '\n') {
-                        error_info.line_number = line_num;
+                        self.error_info.line_number = line_num;
                         return error.InvalidString;
                     }
                     end += 1;
@@ -414,11 +413,12 @@ pub const VM = struct {
                         try ret.append(.{
                             .ty = .Word,
                             .str = input[start..(end + 1)],
+                            .line_num = line_num,
                         });
                         state = .Empty;
                         continue;
                     } else if (!charIsWordValid(ch)) {
-                        error_info.line_number = line_num;
+                        self.error_info.line_number = line_num;
                         return error.InvalidWord;
                     }
 
@@ -429,13 +429,14 @@ pub const VM = struct {
 
         switch (state) {
             .InString => {
-                error_info.line_number = line_num;
+                self.error_info.line_number = line_num;
                 return error.InvalidString;
             },
             .InWord => {
                 try ret.append(.{
                     .ty = .Word,
                     .str = input[start..(end + 1)],
+                    .line_num = line_num,
                 });
             },
             else => {},
@@ -493,7 +494,7 @@ pub const VM = struct {
 
                     if (token.str[0] == ':') {
                         if (token.str.len == 1) {
-                            error_info.line_number = 0;
+                            self.error_info.line_number = 0;
                             return error.InvalidSymbol;
                         } else {
                             try ret.append(.{ .Symbol = try self.internSymbol(token.str[1..]) });
@@ -522,7 +523,6 @@ pub const VM = struct {
 
     // eval ===
 
-    // TODO dont print, return a string
     pub fn nicePrintValue(self: *Self, value: Value) void {
         switch (value) {
             .Int => |val| std.debug.print("{}", .{val}),
@@ -582,7 +582,6 @@ pub const VM = struct {
     pub fn evaluateValue(self: *Self, val: Value) EvalError!void {
         switch (val) {
             .Quotation => |id| {
-                // TODO handle locals
                 try self.eval(self.quotation_table.items[id].get());
             },
             .ForeignFnPtr => |fp| {
@@ -594,10 +593,13 @@ pub const VM = struct {
         }
     }
 
+    // wordLookup needs to be out here to account for
+
     pub fn eval(self: *Self, literals: []const Literal) EvalError!void {
         var quotation_level: usize = 0;
         var q_start: [*]const Literal = undefined;
         var q_ct: usize = 0;
+        const restore_locals_len = self.locals.data.items.len;
 
         for (literals) |*lit| {
             switch (lit.*) {
@@ -634,28 +636,42 @@ pub const VM = struct {
             }
 
             switch (lit.*) {
-                .Int => |i| try self.stack.push(Value{ .Int = i }),
-                .Float => |f| try self.stack.push(Value{ .Float = f }),
-                .Boolean => |b| try self.stack.push(Value{ .Boolean = b }),
+                .Int => |i| try self.stack.push(.{ .Int = i }),
+                .Float => |f| try self.stack.push(.{ .Float = f }),
+                .Boolean => |b| try self.stack.push(.{ .Boolean = b }),
                 .String => |str| {
                     const id = self.string_table.items.len;
                     try self.string_table.append(Cow(u8).init(self.allocator, str));
                     try self.stack.push(.{ .String = id });
                 },
                 .Word => |idx| {
+                    const current_locals_len = self.locals.data.items.len;
+                    if (current_locals_len > restore_locals_len) {
+                        var found_local = false;
+                        for (self.locals.data.items[restore_locals_len..current_locals_len]) |local| {
+                            if (idx == local.name) {
+                                try self.evaluateValue(local.value);
+                                found_local = true;
+                            }
+                        }
+                        if (found_local) continue;
+                    }
+
                     const val = self.word_table.items[idx];
                     if (val) |v| {
                         try self.evaluateValue(v);
                     } else {
-                        error_info.word_not_found = self.symbol_table.items[idx];
+                        self.error_info.word_not_found = self.symbol_table.items[idx];
                         return error.WordNotFound;
                     }
                 },
-                .Symbol => |idx| try self.stack.push(Value{ .Symbol = idx }),
+                .Symbol => |idx| try self.stack.push(.{ .Symbol = idx }),
                 .QuoteOpen, .QuoteClose => {
                     return error.InternalError;
                 },
             }
         }
+
+        self.locals.data.items.len = restore_locals_len;
     }
 };

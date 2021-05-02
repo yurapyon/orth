@@ -1,22 +1,53 @@
-{ 10 + } :k <map> { mset! } keep
-30 :j rot { mset! } keep
-:new-map @
+{
 
-new-map . drop
+{
+5 eq? { :five } { :not-five } if
+} :=5? @
 
-10
-:k new-map mget
-eval
+{
+  :a @local
+  :b @local
+  a =5?
+  b =5?
+} :fn2 @
+
+{
+  .stack
+  :a @local
+  :b @local
+  .stack
+  a
+  b
+  .stack
+  fn2
+} :fn @
+
+5 6 fn
 .stack
 
-new-map <map>,free
+} drop
 
-<vec>
+; ( cond val -- )
+{ { } if } :when @
+{ { } swap if } :unless @
+{ bi^ and } :both? @
+{ bi^ or } :either? @
+
+; 5 5 { + } { - } 2bi
+; 5 5 { + } { - } { eq? } 2tri
+; 5 6 8 { 1 + } tri^
+
+{
+#t #f { and } { or } 2bi drop drop
 .stack
+} drop
 
-10 :ten @
+5 5 { 6 < } both?
+5 6 { 6 < } both?
+6 6 { 6 < } both?
 
-; 20 :j map { set-map! } keep
-; 30 :h map { set-map! } keep
-; 40 :g map { set-map! } keep
+5 5 { 5 <= } either?
+5 6 { 5 <= } either?
+6 6 { 5 <= } either?
 
+.stack

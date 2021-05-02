@@ -8,8 +8,28 @@ usingnamespace lib;
 
 // TODO test that modifying a quotation works
 
-// TODO
-//   map fold, etc
+// TODO make sure recursion works
+
+// TODO specialized /i and /f ?
+
+// TODO functions
+// functional stuff
+//   map fold curry compose
+// math stuff
+//   abs fract mod max min wrap clamp
+// combinators from factor
+//   cond 2dip 2keep
+// string manipulation?
+// type checking
+//   float? int? etc
+
+// TODO types
+//   make sure accessing them from within zig is easy
+//   map function for vecs vs protos should be specialized
+//     vmap mmap
+// vec
+// maps/protos
+// results
 
 //;
 
@@ -35,8 +55,22 @@ pub fn f_ref(vm: *VM) EvalError!void {
     if (vm.word_table.items[name.Symbol]) |val| {
         try vm.stack.push(val);
     } else {
-        lib.error_info.word_not_found = vm.symbol_table.items[name.Symbol];
+        vm.error_info.word_not_found = vm.symbol_table.items[name.Symbol];
         return error.WordNotFound;
+    }
+}
+
+pub fn f_define_local(vm: *VM) EvalError!void {
+    const name = try vm.stack.pop();
+    if (name != .Symbol) return error.TypeError;
+    const value = try vm.stack.pop();
+    if (false) {
+        // TODO notify if name was used twice
+    } else {
+        try vm.locals.push(.{
+            .name = name.Symbol,
+            .value = value,
+        });
     }
 }
 
@@ -60,6 +94,9 @@ pub fn f_print_top(vm: *VM) EvalError!void {
     vm.nicePrintValue(try vm.stack.peek());
     std.debug.print("\n", .{});
 }
+
+// math ===
+// TODO these functions can be cleaned up somehow
 
 pub fn f_plus(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
@@ -166,11 +203,118 @@ pub fn f_divide(vm: *VM) EvalError!void {
     }
 }
 
+pub fn f_lt(vm: *VM) EvalError!void {
+    const b = try vm.stack.pop();
+    const a = try vm.stack.pop();
+    switch (b) {
+        .Int => |bi| switch (a) {
+            .Int => |ai| {
+                try vm.stack.push(.{ .Boolean = ai < bi });
+            },
+            .Float => |af| {
+                try vm.stack.push(.{ .Boolean = af < @intToFloat(f32, bi) });
+            },
+            else => return error.TypeError,
+        },
+        .Float => |bf| switch (a) {
+            .Int => |ai| {
+                try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) < bf });
+            },
+            .Float => |af| {
+                try vm.stack.push(.{ .Boolean = af < bf });
+            },
+            else => return error.TypeError,
+        },
+        else => return error.TypeError,
+    }
+}
+
+pub fn f_lte(vm: *VM) EvalError!void {
+    const b = try vm.stack.pop();
+    const a = try vm.stack.pop();
+    switch (b) {
+        .Int => |bi| switch (a) {
+            .Int => |ai| {
+                try vm.stack.push(.{ .Boolean = ai <= bi });
+            },
+            .Float => |af| {
+                try vm.stack.push(.{ .Boolean = af <= @intToFloat(f32, bi) });
+            },
+            else => return error.TypeError,
+        },
+        .Float => |bf| switch (a) {
+            .Int => |ai| {
+                try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) <= bf });
+            },
+            .Float => |af| {
+                try vm.stack.push(.{ .Boolean = af <= bf });
+            },
+            else => return error.TypeError,
+        },
+        else => return error.TypeError,
+    }
+}
+
+pub fn f_gt(vm: *VM) EvalError!void {
+    const b = try vm.stack.pop();
+    const a = try vm.stack.pop();
+    switch (b) {
+        .Int => |bi| switch (a) {
+            .Int => |ai| {
+                try vm.stack.push(.{ .Boolean = ai > bi });
+            },
+            .Float => |af| {
+                try vm.stack.push(.{ .Boolean = af > @intToFloat(f32, bi) });
+            },
+            else => return error.TypeError,
+        },
+        .Float => |bf| switch (a) {
+            .Int => |ai| {
+                try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) > bf });
+            },
+            .Float => |af| {
+                try vm.stack.push(.{ .Boolean = af > bf });
+            },
+            else => return error.TypeError,
+        },
+        else => return error.TypeError,
+    }
+}
+
+pub fn f_gte(vm: *VM) EvalError!void {
+    const b = try vm.stack.pop();
+    const a = try vm.stack.pop();
+    switch (b) {
+        .Int => |bi| switch (a) {
+            .Int => |ai| {
+                try vm.stack.push(.{ .Boolean = ai >= bi });
+            },
+            .Float => |af| {
+                try vm.stack.push(.{ .Boolean = af >= @intToFloat(f32, bi) });
+            },
+            else => return error.TypeError,
+        },
+        .Float => |bf| switch (a) {
+            .Int => |ai| {
+                try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) >= bf });
+            },
+            .Float => |af| {
+                try vm.stack.push(.{ .Boolean = af >= bf });
+            },
+            else => return error.TypeError,
+        },
+        else => return error.TypeError,
+    }
+}
+
+// conditionals ===
+
+// TODO if_true and if_false should be quotations?
 pub fn f_if(vm: *VM) EvalError!void {
-    const condition = try vm.stack.pop();
-    if (condition != .Boolean) return error.TypeError;
     const if_false = try vm.stack.pop();
     const if_true = try vm.stack.pop();
+    const condition = try vm.stack.pop();
+    if (condition != .Boolean) return error.TypeError;
     switch (condition) {
         .Boolean => |bl| {
             if (bl) {
@@ -187,6 +331,29 @@ pub fn f_equal(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     const b = try vm.stack.pop();
     try vm.stack.push(.{ .Boolean = vm.equalsValue(a, b) });
+}
+
+// TODO maybe make 'and' and 'or' work like lua
+pub fn f_and(vm: *VM) EvalError!void {
+    const a = try vm.stack.pop();
+    if (a != .Boolean) return error.TypeError;
+    const b = try vm.stack.pop();
+    if (b != .Boolean) return error.TypeError;
+    try vm.stack.push(.{ .Boolean = a.Boolean and b.Boolean });
+}
+
+pub fn f_or(vm: *VM) EvalError!void {
+    const a = try vm.stack.pop();
+    if (a != .Boolean) return error.TypeError;
+    const b = try vm.stack.pop();
+    if (b != .Boolean) return error.TypeError;
+    try vm.stack.push(.{ .Boolean = a.Boolean or b.Boolean });
+}
+
+pub fn f_not(vm: *VM) EvalError!void {
+    const b = try vm.stack.pop();
+    if (b != .Boolean) return error.TypeError;
+    try vm.stack.push(.{ .Boolean = !b.Boolean });
 }
 
 // shuffle ===
@@ -226,10 +393,18 @@ pub fn f_neg_rot(vm: *VM) EvalError!void {
 }
 
 pub fn f_over(vm: *VM) EvalError!void {
-    try vm.stack.push((try vm.stack.index(1)).*);
+    try vm.stack.push(try vm.stack.index(1));
 }
 
 // combinators ===
+
+pub fn f_dip(vm: *VM) EvalError!void {
+    const quot = try vm.stack.pop();
+    if (quot != .Quotation) return error.TypeError;
+    const restore = try vm.stack.pop();
+    try vm.eval(vm.quotation_table.items[quot.Quotation].get());
+    try vm.stack.push(restore);
+}
 
 pub fn f_keep(vm: *VM) EvalError!void {
     const quot = try vm.stack.pop();
@@ -237,6 +412,97 @@ pub fn f_keep(vm: *VM) EvalError!void {
     const restore = try vm.stack.peek();
     try vm.eval(vm.quotation_table.items[quot.Quotation].get());
     try vm.stack.push(restore);
+}
+
+pub fn f_bi(vm: *VM) EvalError!void {
+    const q = try vm.stack.pop();
+    if (q != .Quotation) return error.TypeError;
+    const p = try vm.stack.pop();
+    if (p != .Quotation) return error.TypeError;
+    const x = try vm.stack.peek();
+    try vm.eval(vm.quotation_table.items[p.Quotation].get());
+    try vm.stack.push(x);
+    try vm.eval(vm.quotation_table.items[q.Quotation].get());
+}
+
+pub fn f_2bi(vm: *VM) EvalError!void {
+    const q = try vm.stack.pop();
+    if (q != .Quotation) return error.TypeError;
+    const p = try vm.stack.pop();
+    if (p != .Quotation) return error.TypeError;
+    const y = try vm.stack.peek();
+    const x = try vm.stack.index(1);
+    try vm.eval(vm.quotation_table.items[p.Quotation].get());
+    try vm.stack.push(x);
+    try vm.stack.push(y);
+    try vm.eval(vm.quotation_table.items[q.Quotation].get());
+}
+
+pub fn f_tri(vm: *VM) EvalError!void {
+    const r = try vm.stack.pop();
+    if (r != .Quotation) return error.TypeError;
+    const q = try vm.stack.pop();
+    if (q != .Quotation) return error.TypeError;
+    const p = try vm.stack.pop();
+    if (p != .Quotation) return error.TypeError;
+    const x = try vm.stack.peek();
+    try vm.eval(vm.quotation_table.items[p.Quotation].get());
+    try vm.stack.push(x);
+    try vm.eval(vm.quotation_table.items[q.Quotation].get());
+    try vm.stack.push(x);
+    try vm.eval(vm.quotation_table.items[r.Quotation].get());
+}
+
+pub fn f_2tri(vm: *VM) EvalError!void {
+    const r = try vm.stack.pop();
+    if (r != .Quotation) return error.TypeError;
+    const q = try vm.stack.pop();
+    if (q != .Quotation) return error.TypeError;
+    const p = try vm.stack.pop();
+    if (p != .Quotation) return error.TypeError;
+    const y = try vm.stack.peek();
+    const x = try vm.stack.index(1);
+    try vm.eval(vm.quotation_table.items[p.Quotation].get());
+    try vm.stack.push(x);
+    try vm.stack.push(y);
+    try vm.eval(vm.quotation_table.items[q.Quotation].get());
+    try vm.stack.push(x);
+    try vm.stack.push(y);
+    try vm.eval(vm.quotation_table.items[r.Quotation].get());
+}
+
+pub fn f_bi_star(vm: *VM) EvalError!void {
+    const q = try vm.stack.pop();
+    if (q != .Quotation) return error.TypeError;
+    const p = try vm.stack.pop();
+    if (p != .Quotation) return error.TypeError;
+    const y = try vm.stack.pop();
+    try vm.eval(vm.quotation_table.items[p.Quotation].get());
+    try vm.stack.push(y);
+    try vm.eval(vm.quotation_table.items[q.Quotation].get());
+}
+
+// TODO tri_star
+
+pub fn f_bi_apply(vm: *VM) EvalError!void {
+    const q = try vm.stack.pop();
+    if (q != .Quotation) return error.TypeError;
+    const restore = try vm.stack.pop();
+    try vm.eval(vm.quotation_table.items[q.Quotation].get());
+    try vm.stack.push(restore);
+    try vm.eval(vm.quotation_table.items[q.Quotation].get());
+}
+
+pub fn f_tri_apply(vm: *VM) EvalError!void {
+    const q = try vm.stack.pop();
+    if (q != .Quotation) return error.TypeError;
+    const a = try vm.stack.pop();
+    const b = try vm.stack.pop();
+    try vm.eval(vm.quotation_table.items[q.Quotation].get());
+    try vm.stack.push(b);
+    try vm.eval(vm.quotation_table.items[q.Quotation].get());
+    try vm.stack.push(a);
+    try vm.eval(vm.quotation_table.items[q.Quotation].get());
 }
 
 // vec ===
@@ -283,6 +549,8 @@ pub const Vec = struct {
         try vec_ptr.data.append(val);
     }
 
+    // TODO change order of args to vpush ct?
+    // have it be   ( ... a b c d ct <vec> -- )
     pub fn _push_ct(vm: *VM) EvalError!void {
         // TODO assert stack size
         const ct_ = try vm.stack.pop();
@@ -291,7 +559,7 @@ pub const Vec = struct {
         // TODO ct has to be > 0
         const ct = @intCast(usize, ct_.Int);
 
-        var vec_ptr = try Vec.ft.assertValueIsType((try vm.stack.index(ct)).*);
+        var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.index(ct));
         try vec_ptr.data.appendSlice(vm.stack.data.items[(vm.stack.data.items.len - ct)..vm.stack.data.items.len]);
         vm.stack.data.items.len -= ct;
     }
@@ -379,6 +647,10 @@ pub const builtins = [_]struct {
         .func = f_ref,
     },
     .{
+        .name = "@local",
+        .func = f_define_local,
+    },
+    .{
         .name = "eval",
         .func = f_eval,
     },
@@ -390,6 +662,7 @@ pub const builtins = [_]struct {
         .name = ".stack",
         .func = f_print_stack,
     },
+
     .{
         .name = "+",
         .func = f_plus,
@@ -407,12 +680,41 @@ pub const builtins = [_]struct {
         .func = f_divide,
     },
     .{
+        .name = "<",
+        .func = f_lt,
+    },
+    .{
+        .name = "<=",
+        .func = f_lte,
+    },
+    .{
+        .name = ">",
+        .func = f_gt,
+    },
+    .{
+        .name = ">=",
+        .func = f_gte,
+    },
+
+    .{
         .name = "if",
         .func = f_if,
     },
     .{
         .name = "eq?",
         .func = f_equal,
+    },
+    .{
+        .name = "and",
+        .func = f_and,
+    },
+    .{
+        .name = "or",
+        .func = f_or,
+    },
+    .{
+        .name = "not",
+        .func = f_not,
     },
 
     .{
@@ -441,8 +743,40 @@ pub const builtins = [_]struct {
     },
 
     .{
+        .name = "dip",
+        .func = f_dip,
+    },
+    .{
         .name = "keep",
         .func = f_keep,
+    },
+    .{
+        .name = "bi",
+        .func = f_bi,
+    },
+    .{
+        .name = "2bi",
+        .func = f_2bi,
+    },
+    .{
+        .name = "tri",
+        .func = f_tri,
+    },
+    .{
+        .name = "2tri",
+        .func = f_2tri,
+    },
+    .{
+        .name = "bi*",
+        .func = f_bi_star,
+    },
+    .{
+        .name = "bi^",
+        .func = f_bi_apply,
+    },
+    .{
+        .name = "tri^",
+        .func = f_tri_apply,
     },
 
     .{

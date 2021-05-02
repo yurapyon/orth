@@ -23,11 +23,11 @@ pub fn something(allocator: *Allocator) !void {
     const tokens = vm.tokenize(f) catch |err| {
         switch (err) {
             error.InvalidWord => {
-                std.log.info("invalid word: {}", .{lib.error_info.line_number});
+                std.log.info("invalid word: {}", .{vm.error_info.line_number});
                 return;
             },
             error.InvalidString => {
-                std.log.info("invalid string: {}", .{lib.error_info.line_number});
+                std.log.info("invalid string: {}", .{vm.error_info.line_number});
                 return;
             },
             else => return err,
@@ -58,7 +58,7 @@ pub fn something(allocator: *Allocator) !void {
     vm.eval(literals.items) catch |err| {
         switch (err) {
             error.WordNotFound => {
-                std.log.info("word not found: {}", .{lib.error_info.word_not_found});
+                std.log.info("word not found: {}", .{vm.error_info.word_not_found});
                 return;
             },
             else => return err,

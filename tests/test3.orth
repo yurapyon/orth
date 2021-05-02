@@ -1,0 +1,22 @@
+{ 10 + } :k <map> { mset! } keep
+30 :j rot { mset! } keep
+:new-map @
+
+new-map . drop
+
+10
+:k new-map mget
+eval
+.stack
+
+new-map <map>,free
+
+<vec>
+.stack
+
+10 :ten @
+
+; 20 :j map { set-map! } keep
+; 30 :h map { set-map! } keep
+; 40 :g map { set-map! } keep
+
