@@ -1,0 +1,108 @@
+{ . drop } :print @
+
+;
+
+#sentinel :[ @
+
+{ dup #sentinel = { drop <R } { .R vpush! ]vec' } if
+} :]vec' @
+
+{ ; ( #sentinel ... a b c -- vec )
+<vec> >R ]vec' { vreverse! } keep
+} :]vec @
+
+{ dup #sentinel = { drop <R } { swap .R mset! ]map' } if
+} :]map' @
+
+{ ; ( #sentinel ... k1 v1 k2 v2 -- map )
+<map> >R ]map'
+} :]map @
+
+;
+
+{
+[ :r 1 :g 1 :b 1 :a 1 ]map
+} :<color>,white @
+
+{
+[ :r 0 :g 0 :b 0 :a 0 ]map
+} :<color>,black @
+
+{ ; ( c1 c2 -- c3 )
+:b @local
+:a @local
+[ :r a b { :r swap mget } bi^ +
+  :g a b { :g swap mget } bi^ +
+  :b a b { :b swap mget } bi^ +
+  :a a b { :a swap mget } bi^ +
+]map
+} :color+ @
+
+<color>,white
+<color>,white
+color+
+.stack
+
+;
+
+{ ; ( min max val -- wrapped )
+:val @local
+:max @local
+:min @local
+val min -
+max min -
+mod min +
+} :wrap @
+
+{ ; ( vec -- anim )
+<map> >R
+:data .R mset!
+0 :at .R mset!
+<R
+} :<anim> @
+
+{ ; (anim -- )
+  :data swap { mget <vec>,free } keep
+  <map>,free
+} :<anim>,free @
+
+{ ; ( anim -- val )
+{ :at swap mget } { :data swap mget } bi
+vget
+} :anim-peek @
+
+{ ; ( adv anim -- )
+>R
+:at .R mget +
+0
+:data .R mget vlen
+rot< wrap
+:at <R mset!
+} :anim-advance! @
+
+{
+1 swap { anim-advance! } keep anim-peek
+} :anim-next! @
+
+{
+-1 swap { anim-advance! } keep anim-peek
+} :anim-prev! @
+
+[ 1 2 3 ]vec <anim> :a @
+
+[ :a 5
+  :b 6 ]map . drop
+
+a { anim-next! print } keep
+{ anim-next! print } keep
+{ anim-next! print } keep
+{ anim-next! print } keep
+{ anim-next! print } keep
+.stack
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+
+<anim>,free

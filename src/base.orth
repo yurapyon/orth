@@ -1,0 +1,140 @@
+{ ref eval
+} :exec @
+
+; =====
+
+{ drop drop
+} :2drop @
+
+{ drop drop drop
+} :3drop @
+
+{ { drop } dip
+} :nip @
+
+{ { 2drop } dip
+} :2nip @
+
+; =====
+
+{ swap { dip } dip
+} :2dip @
+
+{ swap { 2dip } dip
+} :3dip @
+
+{ swap { 3dip } dip
+} :4dip @
+
+{ over { eval } dip
+} :keep @
+
+{ { 2dup } dip 2dip
+} :2keep @
+
+{ { 3dup } dip 3dip
+} :3keep @
+
+{ { keep } dip eval
+} :bi @
+
+{ { 2keep } dip eval
+} :2bi @
+
+{ { 3keep } dip eval
+} :3bi @
+
+{ { { keep } dip keep } dip eval
+} :tri @
+
+{ { { 2keep } dip 2keep } dip eval
+} :2tri @
+
+{ { { 3keep } dip 3keep } dip eval
+} :3tri @
+
+{ { dip } dip eval
+} :bi* @
+
+{ { 2dip } dip eval
+} :2bi* @
+
+{ { { 2dip } dip dip } dip eval
+} :tri* @
+
+{ { 4dip } 2dip 2bi*
+} :2tri* @
+
+{ dup bi*
+} :bi^ @
+
+{ dup 2bi*
+} :2bi^ @
+
+{ 2dup tri*
+} :tri^ @
+
+{ 2dup 2tri*
+} :2tri^ @
+
+{ bi^ and
+} :both? @
+
+{ bi^ or
+} :either? @
+
+; =====
+
+{ ? eval
+} :if @
+
+{ { } if
+} :when @
+
+{ { } swap if
+} :unless @
+
+; TODO
+; if* when* unless* ?if
+; cond case
+
+; =====
+
+{ { > } 2keep ?
+} :max @
+
+{ { < } 2keep ?
+} :min @
+
+{ dup 0 < { neg } when
+} :abs @
+
+{ min max
+} :clamp @
+
+{ ; ( min max val -- wrapped )
+:val @local
+:max @local
+:min @local
+val min -
+max min -
+mod min +
+} :wrap @
+
+; =====
+
+#sentinel :[ @
+
+{ dup #sentinel eq? { drop <R } { .R vpush! ]vec' } if
+} :]vec' @
+
+{ ; ( #sentinel ... a b c -- vec )
+<vec> >R ]vec' { vreverse! } keep
+} :]vec @
+
+{ dup #sentinel eq? { drop <R } { swap .R mset! ]map' } if
+} :]map' @
+
+{ ; ( #sentinel ... k1 v1 k2 v2 -- map )
+<map> >R ]map'
+} :]map @

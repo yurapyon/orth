@@ -1,113 +1,81 @@
 { . drop } :print @
-{ swap mget } :mval @
+{ .stack clear-stack } :print-stack @
 
 ;
 
-{ #sentinel } :[ @
+[ 1 2 3 4 ]vec
+print-stack
 
-{ dup #sentinel = { drop <R } { .R vpush! ]vec' } if
-} :]vec' @
+#t 1 2 ?
+#f 1 2 ?
+4 #t { 1 + } unless
+4 #f { 1 + } unless
+print-stack
 
-{ ; ( #sentinel ... a b c -- vec )
-<vec> >R ]vec' { vreverse! } keep
-} :]vec @
+0 10 20 clamp
+0 10 -10 clamp
+0 10 10 clamp
+0 10 5 clamp
+print-stack
 
-{ dup #sentinel = { drop <R } { swap .R mset! ]map' } if
-} :]map' @
+1 2 max
+1 2 min
+print-stack
 
-{ ; ( #sentinel ... k1 v1 k2 v2 -- map )
-<map> >R ]map'
-} :]map @
-
-;
+10 -10 { abs } bi^
+0 abs
+print-stack
 
 {
-[ :r 1 :g 1 :b 1 :a 1 ]map
-} :<color>,white @
+:x :y :z nip  .stack 2drop
+:x :y :z 2nip .stack
+:x :y    2dup .stack 2drop 2drop
+:x :y :z 3dup .stack
+
+{ dup exec exec
+} :twice @
+
+{ "hello" print
+} :hello @
+
+:hello twice
+
+1 2 3 { + } dip
+print-stack
+
+1 2 3 { + } keep
+print-stack
+
+1 2 3 { + } 2keep
+print-stack
+
+1 2 3 { + } 3keep
+print-stack
+
+1.0 { 1 + } { 2 - } { 5 / } tri
+print-stack
+
+2 10 5 20 { + } { * } 2bi*
+print-stack
+
+} drop
 
 {
-[ :r 0 :g 0 :b 0 :a 0 ]map
-} :<color>,black @
+[ :north :south
+  :south :north
+  :east :west
+  :west :east
+]map :_opposite-direction @
 
-{ ; ( c1 c2 -- c3 )
-:b @local
-:a @local
-[ :r a b { :r swap mget } bi^ +
-  :g a b { :g swap mget } bi^ +
-  :b a b { :b swap mget } bi^ +
-  :a a b { :a swap mget } bi^ +
-]map
-} :color+ @
+{
+_opposite-direction mget
+} :opposite-direction @
 
-<color>,white
-<color>,white
-color+
+:north opposite-direction .
+:south opposite-direction .
+:east opposite-direction .
+:west opposite-direction .
 .stack
-
-{
-
-;
-
-{ ; ( min max val -- wrapped )
-:val @local
-:max @local
-:min @local
-val min -
-max min -
-mod min +
-} :wrap @
-
-{ ; ( vec -- anim )
-<map> >R
-:data .R mset!
-0 :at .R mset!
-<R
-} :<anim> @
-
-{ ; (anim -- )
-  :data swap { mget <vec>,free } keep
-  <map>,free
-} :<anim>,free @
-
-{ ; ( anim -- val )
-{ :at swap mget } { :data swap mget } bi
-vget
-} :anim-peek @
-
-{ ; ( adv anim -- )
->R
-:at .R mget +
-0
-:data .R mget vlen
-rot< wrap
-:at <R mset!
-} :anim-advance! @
-
-{
-1 swap { anim-advance! } keep anim-peek
-} :anim-next! @
-
-{
--1 swap { anim-advance! } keep anim-peek
-} :anim-prev! @
-
-[ 1 2 3 ]vec <anim> :a @
-
-[ :a 5
-  :b 6 ]map . drop
-
-a { anim-next! print } keep
-{ anim-next! print } keep
-{ anim-next! print } keep
-{ anim-next! print } keep
-{ anim-next! print } keep
+2drop 2drop
 .stack
-{ anim-prev! print } keep
-{ anim-prev! print } keep
-{ anim-prev! print } keep
-{ anim-prev! print } keep
-{ anim-prev! print } keep
-
-<anim>,free
-
 } drop

@@ -2,8 +2,6 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const ascii = std.ascii;
-const AutoHashMap = std.AutoHashMap;
-const StringHashMap = std.StringHashMap;
 
 //;
 
@@ -15,15 +13,22 @@ const StringHashMap = std.StringHashMap;
 //   # is an escaper thing
 // multiline strings
 // multiline comments?
-// array literals?
+//   could use ( )
 // locals
 //   should you look back out of your current 'scope'?
 // return stack
 //   could be used instead of locals
-//   rename to alt_stack or somethign
+//   rename to alt_stack or something
 
+// TODO want
 // handle recursion better
 //   right now it seems theres a limit
+// currying changes how quoations work
+//   could use a new type for curried expressions
+//   { value, quotation }
+//   could do it by letting foreigntypes mark themselves as callable
+//   then having something w a stack of values and quotation
+// namespaces / envs would be nice but have to think abt how they should work
 
 // TODO QOL
 // better int parser
@@ -48,7 +53,11 @@ const StringHashMap = std.StringHashMap;
 //   locals memory management
 //   different way of knowing where to restore locals to
 //     so ForeignFns can do stuff with locals
-// comments are ( ) ?
+
+//
+// currently literals returned from parser need to stay around while vm is evaluating
+//   would be nice if this wasnt the case ?
+//   this goes along with copying strings and symbols and keeping them in the vm
 
 // errors ===
 
@@ -221,7 +230,6 @@ pub fn ForeignTypeDef(
     comptime equals_fn_: ?fn (*VM, ForeignPtr, ForeignPtr) bool,
 ) type {
     return struct {
-        const name = @typeName(T);
         const display_fn = display_fn_ orelse defaultDisplay;
         const equals_fn = equals_fn_ orelse defaultEquals;
 
@@ -229,14 +237,13 @@ pub fn ForeignTypeDef(
 
         pub fn foreignType() ForeignType {
             return .{
-                .name = name,
                 .display_fn = display_fn,
                 .equals_fn = equals_fn,
             };
         }
 
         fn defaultDisplay(vm: *VM, p: ForeignPtr) void {
-            std.debug.print("*<{} {}>", .{ vm.type_table.items[p.ty].name, p.ptr });
+            std.debug.print("*<{} {}>", .{ type_id, p.ptr });
         }
 
         fn defaultEquals(vm: *VM, p1: ForeignPtr, p2: ForeignPtr) bool {
@@ -286,7 +293,6 @@ pub fn ForeignTypeDef(
 }
 
 pub const ForeignType = struct {
-    name: []const u8,
     display_fn: fn (*VM, ForeignPtr) void,
     equals_fn: fn (*VM, ForeignPtr, ForeignPtr) bool,
 };

@@ -1,6 +1,5 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const StringHashMap = std.StringHashMap;
 
 //;
 
@@ -14,11 +13,41 @@ pub fn readFile(allocator: *Allocator, filename: []const u8) ![]u8 {
 }
 
 pub fn something(allocator: *Allocator) !void {
-    var f = try readFile(allocator, "tests/test.orth");
-    defer allocator.free(f);
-
     var vm = lib.VM.init(allocator);
     defer vm.deinit();
+
+    try vm.defineWord("#t", .{ .Boolean = true });
+    try vm.defineWord("#f", .{ .Boolean = false });
+    try vm.defineWord("#sentinel", .{ .Sentinel = {} });
+
+    for (builtins.builtins) |bi| {
+        const idx = try vm.internSymbol(bi.name);
+        vm.word_table.items[idx] = lib.Value{
+            .ForeignFnPtr = .{
+                .name = idx,
+                .func = bi.func,
+            },
+        };
+    }
+
+    _ = try vm.defineForeignType(builtins.Vec.ft);
+    _ = try vm.defineForeignType(builtins.Proto.ft);
+
+    var base_f = try readFile(allocator, "src/base.orth");
+    defer allocator.free(base_f);
+
+    const base_toks = try vm.tokenize(base_f);
+    defer base_toks.deinit();
+
+    const base_lits = try vm.parse(base_toks.items);
+    defer base_lits.deinit();
+
+    try vm.eval(base_lits.items);
+
+    //;
+
+    var f = try readFile(allocator, "tests/test.orth");
+    defer allocator.free(f);
 
     const tokens = vm.tokenize(f) catch |err| {
         switch (err) {
@@ -37,26 +66,6 @@ pub fn something(allocator: *Allocator) !void {
 
     const literals = try vm.parse(tokens.items);
     defer literals.deinit();
-    for (literals.items) |lit| {
-        // lit.nicePrint(&vm);
-        // std.debug.print("\n", .{});
-    }
-
-    try vm.defineWord("#t", .{ .Boolean = true });
-    try vm.defineWord("#f", .{ .Boolean = true });
-    try vm.defineWord("#sentinel", .{ .Sentinel = {} });
-    for (builtins.builtins) |bi| {
-        const idx = try vm.internSymbol(bi.name);
-        vm.word_table.items[idx] = lib.Value{
-            .ForeignFnPtr = .{
-                .name = idx,
-                .func = bi.func,
-            },
-        };
-    }
-
-    _ = try vm.defineForeignType(builtins.Vec.ft);
-    _ = try vm.defineForeignType(builtins.Map.ft);
 
     vm.eval(literals.items) catch |err| {
         switch (err) {

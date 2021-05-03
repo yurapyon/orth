@@ -10,13 +10,11 @@ usingnamespace lib;
 
 // TODO make sure recursion works
 
-// TODO specialized /i and /f ?
-
 // TODO functions
 // functional stuff
 //   map fold curry compose
 // math stuff
-//   abs fract mod max min wrap clamp
+//   abs fract
 // combinators from factor
 //   cond 2dip 2keep
 // string manipulation?
@@ -30,6 +28,8 @@ usingnamespace lib;
 // vec
 // maps/protos
 // results
+
+// bitwise operators
 
 //;
 
@@ -81,6 +81,16 @@ pub fn f_eval(vm: *VM) EvalError!void {
     try vm.evaluateValue(val);
 }
 
+pub fn f_clear_stack(vm: *VM) EvalError!void {
+    vm.stack.data.items.len = 0;
+}
+
+pub fn f_print_top(vm: *VM) EvalError!void {
+    std.debug.print("TOP| ", .{});
+    vm.nicePrintValue(try vm.stack.peek());
+    std.debug.print("\n", .{});
+}
+
 pub fn f_print_stack(vm: *VM) EvalError!void {
     std.debug.print("STACK| len: {}\n", .{vm.stack.data.items.len});
     for (vm.stack.data.items) |it, i| {
@@ -90,13 +100,16 @@ pub fn f_print_stack(vm: *VM) EvalError!void {
     }
 }
 
-pub fn f_print_top(vm: *VM) EvalError!void {
-    std.debug.print("TOP| ", .{});
-    vm.nicePrintValue(try vm.stack.peek());
-    std.debug.print("\n", .{});
-}
-
 // math ===
+
+pub fn f_negative(vm: *VM) EvalError!void {
+    const a = try vm.stack.pop();
+    switch (a) {
+        .Int => |i| try vm.stack.push(.{ .Int = -a.Int }),
+        .Float => |f| try vm.stack.push(.{ .Float = -a.Float }),
+        else => return error.TypeError,
+    }
+}
 
 pub fn f_plus(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
@@ -202,6 +215,32 @@ pub fn f_mod(vm: *VM) EvalError!void {
     }
 }
 
+pub fn f_rem(vm: *VM) EvalError!void {
+    const b = try vm.stack.pop();
+    const a = try vm.stack.pop();
+    switch (b) {
+        .Int => |bi| {
+            if (bi == 0) return error.DivideByZero;
+            if (bi < 0) return error.NegativeDenominator;
+            switch (a) {
+                .Int => |ai| try vm.stack.push(.{ .Int = @rem(ai, bi) }),
+                .Float => |af| try vm.stack.push(.{ .Float = @rem(af, @intToFloat(f32, bi)) }),
+                else => return error.TypeError,
+            }
+        },
+        .Float => |bf| {
+            if (bf == 0) return error.DivideByZero;
+            if (bf < 0) return error.NegativeDenominator;
+            switch (a) {
+                .Int => |ai| try vm.stack.push(.{ .Float = @rem(@intToFloat(f32, ai), bf) }),
+                .Float => |af| try vm.stack.push(.{ .Float = @rem(af, bf) }),
+                else => return error.TypeError,
+            }
+        },
+        else => return error.TypeError,
+    }
+}
+
 pub fn f_lt(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
@@ -274,21 +313,34 @@ pub fn f_gte(vm: *VM) EvalError!void {
     }
 }
 
+pub fn f_number_equal(vm: *VM) EvalError!void {
+    const b = try vm.stack.pop();
+    const a = try vm.stack.pop();
+    switch (b) {
+        .Int => |bi| switch (a) {
+            .Int => |ai| try vm.stack.push(.{ .Boolean = ai == bi }),
+            .Float => |af| try vm.stack.push(.{ .Boolean = af == @intToFloat(f32, bi) }),
+            else => return error.TypeError,
+        },
+        .Float => |bf| switch (a) {
+            .Int => |ai| try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) == bf }),
+            .Float => |af| try vm.stack.push(.{ .Boolean = af == bf }),
+            else => return error.TypeError,
+        },
+        else => return error.TypeError,
+    }
+}
+
 // conditionals ===
 
-// TODO if_true and if_false should be quotations?
-pub fn f_if(vm: *VM) EvalError!void {
+pub fn f_choose(vm: *VM) EvalError!void {
     const if_false = try vm.stack.pop();
     const if_true = try vm.stack.pop();
     const condition = try vm.stack.pop();
     if (condition != .Boolean) return error.TypeError;
     switch (condition) {
-        .Boolean => |bl| {
-            if (bl) {
-                try vm.evaluateValue(if_true);
-            } else {
-                try vm.evaluateValue(if_false);
-            }
+        .Boolean => |b| {
+            try vm.stack.push(if (b) if_true else if_false);
         },
         else => return error.TypeError,
     }
@@ -303,14 +355,21 @@ pub fn f_equal(vm: *VM) EvalError!void {
         .Boolean => |val| val == b.Boolean,
         .Sentinel => true,
         .Symbol => |val| val == b.Symbol,
+        .ForeignFnPtr => |ptr| ptr.name == b.ForeignFnPtr.name and
+            ptr.func == b.ForeignFnPtr.func,
         // TODO
         .String => false,
         .Quotation => false,
-        .ForeignFnPtr => false,
         .ForeignPtr => |ptr| ptr.ty == b.ForeignPtr.ty and
             vm.type_table.items[ptr.ty].equals_fn(vm, a.ForeignPtr, b.ForeignPtr),
     } else false;
     try vm.stack.push(.{ .Boolean = are_equal });
+}
+
+pub fn f_not(vm: *VM) EvalError!void {
+    const b = try vm.stack.pop();
+    if (b != .Boolean) return error.TypeError;
+    try vm.stack.push(.{ .Boolean = !b.Boolean });
 }
 
 // TODO maybe make 'and' and 'or' work like lua
@@ -328,12 +387,6 @@ pub fn f_or(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     if (b != .Boolean) return error.TypeError;
     try vm.stack.push(.{ .Boolean = a.Boolean or b.Boolean });
-}
-
-pub fn f_not(vm: *VM) EvalError!void {
-    const b = try vm.stack.pop();
-    if (b != .Boolean) return error.TypeError;
-    try vm.stack.push(.{ .Boolean = !b.Boolean });
 }
 
 // return stack ===
@@ -358,6 +411,30 @@ pub fn f_drop(vm: *VM) EvalError!void {
 
 pub fn f_dup(vm: *VM) EvalError!void {
     try vm.stack.push(try vm.stack.peek());
+}
+
+pub fn f_2dup(vm: *VM) EvalError!void {
+    try vm.stack.push(try vm.stack.index(1));
+    try vm.stack.push(try vm.stack.index(1));
+}
+
+pub fn f_3dup(vm: *VM) EvalError!void {
+    try vm.stack.push(try vm.stack.index(2));
+    try vm.stack.push(try vm.stack.index(2));
+    try vm.stack.push(try vm.stack.index(2));
+}
+
+pub fn f_over(vm: *VM) EvalError!void {
+    try vm.stack.push(try vm.stack.index(1));
+}
+
+pub fn f_2over(vm: *VM) EvalError!void {
+    try vm.stack.push(try vm.stack.index(2));
+    try vm.stack.push(try vm.stack.index(2));
+}
+
+pub fn f_pick(vm: *VM) EvalError!void {
+    try vm.stack.push(try vm.stack.index(2));
 }
 
 pub fn f_swap(vm: *VM) EvalError!void {
@@ -385,10 +462,6 @@ pub fn f_neg_rot(vm: *VM) EvalError!void {
     try vm.stack.push(y);
 }
 
-pub fn f_over(vm: *VM) EvalError!void {
-    try vm.stack.push(try vm.stack.index(1));
-}
-
 // combinators ===
 
 pub fn f_dip(vm: *VM) EvalError!void {
@@ -399,118 +472,17 @@ pub fn f_dip(vm: *VM) EvalError!void {
     try vm.stack.push(restore);
 }
 
-pub fn f_keep(vm: *VM) EvalError!void {
-    const quot = try vm.stack.pop();
-    if (quot != .Quotation) return error.TypeError;
-    const restore = try vm.stack.peek();
-    try vm.eval(vm.quotation_table.items[quot.Quotation].get());
-    try vm.stack.push(restore);
-}
-
-pub fn f_bi(vm: *VM) EvalError!void {
-    const q = try vm.stack.pop();
-    if (q != .Quotation) return error.TypeError;
-    const p = try vm.stack.pop();
-    if (p != .Quotation) return error.TypeError;
-    const x = try vm.stack.peek();
-    try vm.eval(vm.quotation_table.items[p.Quotation].get());
-    try vm.stack.push(x);
-    try vm.eval(vm.quotation_table.items[q.Quotation].get());
-}
-
-pub fn f_2bi(vm: *VM) EvalError!void {
-    const q = try vm.stack.pop();
-    if (q != .Quotation) return error.TypeError;
-    const p = try vm.stack.pop();
-    if (p != .Quotation) return error.TypeError;
-    const y = try vm.stack.peek();
-    const x = try vm.stack.index(1);
-    try vm.eval(vm.quotation_table.items[p.Quotation].get());
-    try vm.stack.push(x);
-    try vm.stack.push(y);
-    try vm.eval(vm.quotation_table.items[q.Quotation].get());
-}
-
-pub fn f_tri(vm: *VM) EvalError!void {
-    const r = try vm.stack.pop();
-    if (r != .Quotation) return error.TypeError;
-    const q = try vm.stack.pop();
-    if (q != .Quotation) return error.TypeError;
-    const p = try vm.stack.pop();
-    if (p != .Quotation) return error.TypeError;
-    const x = try vm.stack.peek();
-    try vm.eval(vm.quotation_table.items[p.Quotation].get());
-    try vm.stack.push(x);
-    try vm.eval(vm.quotation_table.items[q.Quotation].get());
-    try vm.stack.push(x);
-    try vm.eval(vm.quotation_table.items[r.Quotation].get());
-}
-
-pub fn f_2tri(vm: *VM) EvalError!void {
-    const r = try vm.stack.pop();
-    if (r != .Quotation) return error.TypeError;
-    const q = try vm.stack.pop();
-    if (q != .Quotation) return error.TypeError;
-    const p = try vm.stack.pop();
-    if (p != .Quotation) return error.TypeError;
-    const y = try vm.stack.peek();
-    const x = try vm.stack.index(1);
-    try vm.eval(vm.quotation_table.items[p.Quotation].get());
-    try vm.stack.push(x);
-    try vm.stack.push(y);
-    try vm.eval(vm.quotation_table.items[q.Quotation].get());
-    try vm.stack.push(x);
-    try vm.stack.push(y);
-    try vm.eval(vm.quotation_table.items[r.Quotation].get());
-}
-
-pub fn f_bi_star(vm: *VM) EvalError!void {
-    const q = try vm.stack.pop();
-    if (q != .Quotation) return error.TypeError;
-    const p = try vm.stack.pop();
-    if (p != .Quotation) return error.TypeError;
-    const y = try vm.stack.pop();
-    try vm.eval(vm.quotation_table.items[p.Quotation].get());
-    try vm.stack.push(y);
-    try vm.eval(vm.quotation_table.items[q.Quotation].get());
-}
-
-// TODO tri_star
-
-pub fn f_bi_apply(vm: *VM) EvalError!void {
-    const q = try vm.stack.pop();
-    if (q != .Quotation) return error.TypeError;
-    const restore = try vm.stack.pop();
-    try vm.eval(vm.quotation_table.items[q.Quotation].get());
-    try vm.stack.push(restore);
-    try vm.eval(vm.quotation_table.items[q.Quotation].get());
-}
-
-pub fn f_tri_apply(vm: *VM) EvalError!void {
-    const q = try vm.stack.pop();
-    if (q != .Quotation) return error.TypeError;
-    const a = try vm.stack.pop();
-    const b = try vm.stack.pop();
-    try vm.eval(vm.quotation_table.items[q.Quotation].get());
-    try vm.stack.push(b);
-    try vm.eval(vm.quotation_table.items[q.Quotation].get());
-    try vm.stack.push(a);
-    try vm.eval(vm.quotation_table.items[q.Quotation].get());
-}
-
 // vec ===
 
 pub const Vec = struct {
     const Self = @This();
 
-    pub const ft = ForeignTypeDef(Self, display, equals);
-
-    data: ArrayList(Value),
+    pub const ft = ForeignTypeDef(ArrayList(Value), display, equals);
 
     pub fn display(vm: *VM, p: ForeignPtr) void {
-        const vec = p.cast(Self);
+        const vec = p.cast(ArrayList(Value));
         std.debug.print("v[ ", .{});
-        for (vec.data.items) |v| {
+        for (vec.items) |v| {
             vm.nicePrintValue(v);
             std.debug.print(" ", .{});
         }
@@ -525,37 +497,37 @@ pub const Vec = struct {
     //;
 
     pub fn _make(vm: *VM) EvalError!void {
-        var obj = try vm.allocator.create(Vec);
-        obj.data = ArrayList(Value).init(vm.allocator);
+        var obj = try vm.allocator.create(ArrayList(Value));
+        obj.* = ArrayList(Value).init(vm.allocator);
         try vm.stack.push(Vec.ft.makePtr(obj));
     }
 
     pub fn _free(vm: *VM) EvalError!void {
         var ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
-        ptr.data.deinit();
+        ptr.deinit();
         vm.allocator.destroy(ptr);
     }
 
     pub fn _push(vm: *VM) EvalError!void {
         var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
         const val = try vm.stack.pop();
-        try vec_ptr.data.append(val);
+        try vec_ptr.append(val);
     }
 
     pub fn _get(vm: *VM) EvalError!void {
         var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
         const idx = try vm.stack.pop();
-        try vm.stack.push(vec_ptr.data.items[@intCast(usize, idx.Int)]);
+        try vm.stack.push(vec_ptr.items[@intCast(usize, idx.Int)]);
     }
 
     pub fn _len(vm: *VM) EvalError!void {
         var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
-        try vm.stack.push(.{ .Int = @intCast(i32, vec_ptr.data.items.len) });
+        try vm.stack.push(.{ .Int = @intCast(i32, vec_ptr.items.len) });
     }
 
     pub fn _reverse_in_place(vm: *VM) EvalError!void {
         var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
-        std.mem.reverse(Value, vec_ptr.data.items);
+        std.mem.reverse(Value, vec_ptr.items);
     }
 };
 
@@ -565,24 +537,22 @@ pub const Vec = struct {
 //  where mget should evaluate whatever it gets out of the map
 //  and mref should just push it
 // rename maps to 'prototypes' maybe because theyre supposed to be used for more than just hashtable stuff
-pub const Map = struct {
+pub const Proto = struct {
     const Self = @This();
 
-    const AutoHashMap = std.AutoHashMap;
+    const Map = std.AutoHashMap(usize, Value);
 
-    pub const ft = ForeignTypeDef(Self, display, null);
-
-    map: AutoHashMap(usize, Value),
+    pub const ft = ForeignTypeDef(Map, display, null);
 
     pub fn _make(vm: *VM) EvalError!void {
-        var obj = try vm.allocator.create(Self);
-        obj.map = AutoHashMap(usize, Value).init(vm.allocator);
+        var obj = try vm.allocator.create(Map);
+        obj.* = Map.init(vm.allocator);
         try vm.stack.push(Self.ft.makePtr(obj));
     }
 
     pub fn _free(vm: *VM) EvalError!void {
         var ptr = try Self.ft.assertValueIsType(try vm.stack.pop());
-        ptr.map.deinit();
+        ptr.deinit();
         vm.allocator.destroy(ptr);
     }
 
@@ -592,7 +562,7 @@ pub const Map = struct {
         if (sym != .Symbol) return error.TypeError;
         const value = try vm.stack.pop();
         // TODO handle override
-        try ptr.map.put(sym.Symbol, value);
+        try ptr.put(sym.Symbol, value);
     }
 
     pub fn _get(vm: *VM) EvalError!void {
@@ -600,13 +570,13 @@ pub const Map = struct {
         const sym = try vm.stack.pop();
         if (sym != .Symbol) return error.TypeError;
         // TODO handle not found
-        try vm.stack.push(ptr.map.get(sym.Symbol).?);
+        try vm.stack.push(ptr.get(sym.Symbol).?);
     }
 
     pub fn display(vm: *VM, p: ForeignPtr) void {
-        const map = p.cast(Self);
+        const map = p.cast(Map);
         std.debug.print("m[ ", .{});
-        var iter = map.map.iterator();
+        var iter = map.iterator();
         while (iter.next()) |entry| {
             std.debug.print("{}: ", .{vm.symbol_table.items[entry.key]});
             vm.nicePrintValue(entry.value);
@@ -643,6 +613,10 @@ pub const builtins = [_]struct {
         .func = f_eval,
     },
     .{
+        .name = "clear-stack",
+        .func = f_clear_stack,
+    },
+    .{
         .name = ".",
         .func = f_print_top,
     },
@@ -651,6 +625,10 @@ pub const builtins = [_]struct {
         .func = f_print_stack,
     },
 
+    .{
+        .name = "neg",
+        .func = f_negative,
+    },
     .{
         .name = "+",
         .func = f_plus,
@@ -672,6 +650,10 @@ pub const builtins = [_]struct {
         .func = f_mod,
     },
     .{
+        .name = "rem",
+        .func = f_rem,
+    },
+    .{
         .name = "<",
         .func = f_lt,
     },
@@ -687,14 +669,22 @@ pub const builtins = [_]struct {
         .name = ">=",
         .func = f_gte,
     },
-
-    .{
-        .name = "if",
-        .func = f_if,
-    },
     .{
         .name = "=",
+        .func = f_number_equal,
+    },
+
+    .{
+        .name = "?",
+        .func = f_choose,
+    },
+    .{
+        .name = "eq?",
         .func = f_equal,
+    },
+    .{
+        .name = "not",
+        .func = f_not,
     },
     .{
         .name = "and",
@@ -703,10 +693,6 @@ pub const builtins = [_]struct {
     .{
         .name = "or",
         .func = f_or,
-    },
-    .{
-        .name = "not",
-        .func = f_not,
     },
 
     .{
@@ -731,6 +717,26 @@ pub const builtins = [_]struct {
         .func = f_dup,
     },
     .{
+        .name = "2dup",
+        .func = f_2dup,
+    },
+    .{
+        .name = "3dup",
+        .func = f_3dup,
+    },
+    .{
+        .name = "over",
+        .func = f_over,
+    },
+    .{
+        .name = "2over",
+        .func = f_2over,
+    },
+    .{
+        .name = "pick",
+        .func = f_pick,
+    },
+    .{
         .name = "swap",
         .func = f_swap,
     },
@@ -742,46 +748,10 @@ pub const builtins = [_]struct {
         .name = "rot>",
         .func = f_neg_rot,
     },
-    .{
-        .name = "over",
-        .func = f_over,
-    },
 
     .{
         .name = "dip",
         .func = f_dip,
-    },
-    .{
-        .name = "keep",
-        .func = f_keep,
-    },
-    .{
-        .name = "bi",
-        .func = f_bi,
-    },
-    .{
-        .name = "2bi",
-        .func = f_2bi,
-    },
-    .{
-        .name = "tri",
-        .func = f_tri,
-    },
-    .{
-        .name = "2tri",
-        .func = f_2tri,
-    },
-    .{
-        .name = "bi*",
-        .func = f_bi_star,
-    },
-    .{
-        .name = "bi^",
-        .func = f_bi_apply,
-    },
-    .{
-        .name = "tri^",
-        .func = f_tri_apply,
     },
 
     .{
@@ -811,18 +781,18 @@ pub const builtins = [_]struct {
 
     .{
         .name = "<map>",
-        .func = Map._make,
+        .func = Proto._make,
     },
     .{
         .name = "<map>,free",
-        .func = Map._free,
+        .func = Proto._free,
     },
     .{
         .name = "mget",
-        .func = Map._get,
+        .func = Proto._get,
     },
     .{
         .name = "mset!",
-        .func = Map._set,
+        .func = Proto._set,
     },
 };
