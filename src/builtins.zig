@@ -6,30 +6,26 @@ usingnamespace lib;
 
 //;
 
-// TODO test that modifying a quotation works
-
-// TODO make sure recursion works
-
-// TODO functions
-// functional stuff
-//   map fold curry compose
-// math stuff
-//   abs fract
-// combinators from factor
-//   cond 2dip 2keep
-// string manipulation?
-// type checking
-//   float? int? etc
-
-// TODO types
+// TODO need
+// functions
+//   functional stuff
+//     map function for vecs vs protos should be specialized
+//       vmap! mmap!
+//     map fold
+//     curry compose
+//   math stuff
+//     abs fract
+//   printing functions
+// types
 //   make sure accessing them from within zig is easy
-//   map function for vecs vs protos should be specialized
-//     vmap mmap
-// vec
-// maps/protos
-// results
+//   results
 
-// bitwise operators
+// TODO want
+// functions
+//   bitwise operators
+//   string manipulation
+//   type checking
+//     float? int? etc
 
 //;
 
@@ -37,7 +33,7 @@ pub fn f_panic(vm: *VM) EvalError!void {
     return error.Panic;
 }
 
-// TODO use defineWord
+// TODO cant ude define word here because name is already interned
 pub fn f_define(vm: *VM) EvalError!void {
     const name = try vm.stack.pop();
     if (name != .Symbol) return error.TypeError;
@@ -355,11 +351,11 @@ pub fn f_equal(vm: *VM) EvalError!void {
         .Boolean => |val| val == b.Boolean,
         .Sentinel => true,
         .Symbol => |val| val == b.Symbol,
-        .ForeignFnPtr => |ptr| ptr.name == b.ForeignFnPtr.name and
-            ptr.func == b.ForeignFnPtr.func,
         // TODO
         .String => false,
         .Quotation => false,
+        .ForeignFnPtr => |ptr| ptr.name == b.ForeignFnPtr.name and
+            ptr.func == b.ForeignFnPtr.func,
         .ForeignPtr => |ptr| ptr.ty == b.ForeignPtr.ty and
             vm.type_table.items[ptr.ty].equals_fn(vm, a.ForeignPtr, b.ForeignPtr),
     } else false;
@@ -372,7 +368,6 @@ pub fn f_not(vm: *VM) EvalError!void {
     try vm.stack.push(.{ .Boolean = !b.Boolean });
 }
 
-// TODO maybe make 'and' and 'or' work like lua
 pub fn f_and(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     if (a != .Boolean) return error.TypeError;
@@ -444,7 +439,6 @@ pub fn f_swap(vm: *VM) EvalError!void {
 }
 
 pub fn f_rot(vm: *VM) EvalError!void {
-    // TODO can optimize this
     const z = try vm.stack.pop();
     const y = try vm.stack.pop();
     const x = try vm.stack.pop();
@@ -533,10 +527,12 @@ pub const Vec = struct {
 
 // map ===
 
-// TODO mref vs mget
-//  where mget should evaluate whatever it gets out of the map
-//  and mref should just push it
+// TODO
+// mref vs mget
+//   where mget should evaluate whatever it gets out of the map
+//   and mref should just push it
 // rename maps to 'prototypes' maybe because theyre supposed to be used for more than just hashtable stuff
+// equals
 pub const Proto = struct {
     const Self = @This();
 
@@ -561,7 +557,7 @@ pub const Proto = struct {
         const sym = try vm.stack.pop();
         if (sym != .Symbol) return error.TypeError;
         const value = try vm.stack.pop();
-        // TODO handle override
+        // TODO handle overwrite
         try ptr.put(sym.Symbol, value);
     }
 
@@ -570,6 +566,7 @@ pub const Proto = struct {
         const sym = try vm.stack.pop();
         if (sym != .Symbol) return error.TypeError;
         // TODO handle not found
+        //        should probably return a result
         try vm.stack.push(ptr.get(sym.Symbol).?);
     }
 

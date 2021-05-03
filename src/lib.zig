@@ -8,27 +8,44 @@ const ascii = std.ascii;
 // stack 0 is top
 
 // TODO need
-// char type? could just use ints
-//   maybe do them like #\A #\b etc
-//   # is an escaper thing
-// multiline strings
-// multiline comments?
-//   could use ( )
-// locals
-//   should you look back out of your current 'scope'?
-// return stack
-//   could be used instead of locals
-//   rename to alt_stack or something
+// tokenizer
+//   char type? could just use ints
+//     maybe do them like #\A #\b etc
+//     # is an escaper thing
+//   multiline strings
+//     do the thing where leading spaces are removed
+//     "hello
+//      world" should just be "hello\nworld"
+//   string escaping
+//   multiline comments?
+//     could use ( )
+// memory management
+//   think about using reference counting for string quotations and ptrs
+//       being on the stack or in word_table counts as a reference
+//       could do manual memory management but i imagine that would get hard
+//     string and quotation could be a *Cow(_) but, that complicates memory management
+//       would be better if they were Rc(Cow(_))
+//   currently literals returned from parser need to stay around while vm is evaluating
+//     would be nice if this wasnt the case ?
+//     this goes along with copying strings and symbols and keeping them in the vm
 
 // TODO want
+// error reporting
+//   stack trace thing
+//   tokenize with column number/word number
+//     use line_num in parser code
 // handle recursion better
-//   right now it seems theres a limit
+//   right now it seems theres a limit b/c zig stack depth
 // currying changes how quoations work
-//   could use a new type for curried expressions
-//   { value, quotation }
-//   could do it by letting foreigntypes mark themselves as callable
-//   then having something w a stack of values and quotation
+//   { values, quotation }
+//   can also be used for composoition
+//   could do it by letting foreign types mark themselves as callable
 // namespaces / envs would be nice but have to think abt how they should work
+// return stack
+//   rename to alt_stack or something
+// maybe make 'and' and 'or' work like lua
+//   are values besides #t and #f able to work in places where booleans are accepted
+//   usually this is because everything is nullable, but i dont really want that in orth
 
 // TODO QOL
 // better int parser
@@ -41,11 +58,6 @@ const ascii = std.ascii;
 //     integrate this into nicePrint functions
 //   if nice print is supposed to return strings then idk
 //   nicePrint fns take a Writer
-// think about using reference counting for string quotations and ptrs
-//     being on the stack or in word_table counts as a reference
-//     could do manual memory management but i imagine that would get hard
-//   string and quotation could be a *Cow(_) but, that complicates memory management
-//     would be better if they were Rc(Cow(_))
 // records
 //   need to be significantly different than foreign ptrs
 //   foreign ptrs are pretty easy to use so idk
@@ -53,11 +65,19 @@ const ascii = std.ascii;
 //   locals memory management
 //   different way of knowing where to restore locals to
 //     so ForeignFns can do stuff with locals
-
-//
-// currently literals returned from parser need to stay around while vm is evaluating
-//   would be nice if this wasnt the case ?
-//   this goes along with copying strings and symbols and keeping them in the vm
+//   should you look back out of your current 'scope'?
+//     no probably not
+// quotations
+//   test that modifying a quotation works
+//   { and } are words
+//   could be foreign types if { can turn off evaluation of literals
+//     } handles backtracking like ]vec does and turns it back on
+//   need a way to put literals on the stack
+//     certain types of values cant be turned back into literals and certain things can
+//   escaping words like  \ word  makes more sense
+//     if \ just turns off evaluation for 1 word
+//   ( turns off tokenizing until )
+//   ; turns off tokenizing until newline
 
 // errors ===
 
@@ -164,8 +184,9 @@ pub fn Stack(comptime T: type) type {
             return self.index(0);
         }
 
-        // TODO index is supposed to be used
-        //  for stuff like swap and rot
+        // TODO
+        // original idea for index was to reaturn a pointer
+        //   so it could be used for stuff like swap and rot
         pub fn index(self: *Self, idx: usize) StackError!T {
             if (idx >= self.data.items.len) {
                 return error.OutOfBounds;
@@ -179,9 +200,6 @@ pub fn Stack(comptime T: type) type {
     };
 }
 
-// TODO
-//   tokenize with column number/word number
-//   usze line_num in parser code
 pub const Token = struct {
     pub const Type = enum {
         String,
@@ -361,6 +379,38 @@ pub const VM = struct {
         self.symbol_table.deinit();
     }
 
+    // TODO
+    // fix memory management so this makes more sense
+    pub fn initBase(self: *Self) EvalError!void {
+        try vm.defineWord("#t", .{ .Boolean = true });
+        try vm.defineWord("#f", .{ .Boolean = false });
+        try vm.defineWord("#sentinel", .{ .Sentinel = {} });
+
+        for (builtins.builtins) |bi| {
+            const idx = try vm.internSymbol(bi.name);
+            vm.word_table.items[idx] = lib.Value{
+                .ForeignFnPtr = .{
+                    .name = idx,
+                    .func = bi.func,
+                },
+            };
+        }
+
+        _ = try vm.defineForeignType(builtins.Vec.ft);
+        _ = try vm.defineForeignType(builtins.Proto.ft);
+
+        var base_f = try readFile(allocator, "src/base.orth");
+        defer allocator.free(base_f);
+
+        const base_toks = try vm.tokenize(base_f);
+        defer base_toks.deinit();
+
+        const base_lits = try vm.parse(base_toks.items);
+        defer base_lits.deinit();
+
+        try vm.eval(base_lits.items);
+    }
+
     // tokenize ===
 
     fn charIsDelimiter(ch: u8) bool {
@@ -371,11 +421,6 @@ pub const VM = struct {
         return ch != '"';
     }
 
-    // TODO can probably have multiline strings
-    //        just have to do the thing where leading spaces are removed
-    //  "hello
-    //   world" should just be "hello\nworld"
-    // TODO string escaping
     pub fn tokenize(self: *Self, input: []const u8) TokenizeError!ArrayList(Token) {
         const State = enum {
             Empty,
@@ -495,8 +540,9 @@ pub const VM = struct {
             }
         }
 
-        // TODO copy strings on interning
-        //  makes sense for if u can generate symbols at runtime
+        // TODO need
+        // copy strings on interning
+        //   makes sense for if u can generate symbols at runtime
         const idx = self.symbol_table.items.len;
         try self.symbol_table.append(str);
         try self.word_table.append(null);
@@ -528,10 +574,6 @@ pub const VM = struct {
                         try ret.append(.{ .Int = i });
                     } else if (try_parse_float and (fl != null)) {
                         try ret.append(.{ .Float = fl.? });
-                        //                     } else if (std.mem.eql(u8, token.str, "#t")) {
-                        //                         try ret.append(.{ .Boolean = true });
-                        //                     } else if (std.mem.eql(u8, token.str, "#f")) {
-                        //                         try ret.append(.{ .Boolean = false });
                     } else if (std.mem.eql(u8, token.str, "{")) {
                         try ret.append(.{ .QuoteOpen = {} });
                     } else if (std.mem.eql(u8, token.str, "}")) {
@@ -592,7 +634,7 @@ pub const VM = struct {
         }
     }
 
-    // wordLookup needs to be out here to account for locals
+    // TODO wordLookup needs to be out here to account for locals
 
     pub fn eval(self: *Self, literals: []const Literal) EvalError!void {
         // TODO QOL
