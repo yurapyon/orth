@@ -1,0 +1,81 @@
+{ . drop } :print @
+{ .stack clear-stack } :print-stack @
+
+;
+
+[ 1 2 3 4 ]vec
+print-stack
+
+#t 1 2 ?
+#f 1 2 ?
+4 #t { 1 + } unless
+4 #f { 1 + } unless
+print-stack
+
+0 10 20 clamp
+0 10 -10 clamp
+0 10 10 clamp
+0 10 5 clamp
+print-stack
+
+1 2 max
+1 2 min
+print-stack
+
+10 -10 { abs } bi^
+0 abs
+print-stack
+
+{
+:x :y :z nip  .stack 2drop
+:x :y :z 2nip .stack
+:x :y    2dup .stack 2drop 2drop
+:x :y :z 3dup .stack
+
+{ dup exec exec
+} :twice @
+
+{ "hello" print
+} :hello @
+
+:hello twice
+
+1 2 3 { + } dip
+print-stack
+
+1 2 3 { + } keep
+print-stack
+
+1 2 3 { + } 2keep
+print-stack
+
+1 2 3 { + } 3keep
+print-stack
+
+1.0 { 1 + } { 2 - } { 5 / } tri
+print-stack
+
+2 10 5 20 { + } { * } 2bi*
+print-stack
+
+} drop
+
+{
+[ :north :south
+  :south :north
+  :east :west
+  :west :east
+]map :_opposite-direction @
+
+{
+_opposite-direction mget
+} :opposite-direction @
+
+:north opposite-direction .
+:south opposite-direction .
+:east opposite-direction .
+:west opposite-direction .
+.stack
+2drop 2drop
+.stack
+} drop

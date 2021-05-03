@@ -16,6 +16,8 @@ usingnamespace lib;
 //   math stuff
 //     abs fract
 //   printing functions
+//     display
+//     write
 // types
 //   make sure accessing them from within zig is easy
 //   results

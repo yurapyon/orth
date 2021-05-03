@@ -1,81 +1,82 @@
 { . drop } :print @
-{ .stack clear-stack } :print-stack @
 
 ;
 
-[ 1 2 3 4 ]vec
-print-stack
-
-#t 1 2 ?
-#f 1 2 ?
-4 #t { 1 + } unless
-4 #f { 1 + } unless
-print-stack
-
-0 10 20 clamp
-0 10 -10 clamp
-0 10 10 clamp
-0 10 5 clamp
-print-stack
-
-1 2 max
-1 2 min
-print-stack
-
-10 -10 { abs } bi^
-0 abs
-print-stack
+{
+[ :r 1 :g 1 :b 1 :a 1 ]map
+} :<color>,white @
 
 {
-:x :y :z nip  .stack 2drop
-:x :y :z 2nip .stack
-:x :y    2dup .stack 2drop 2drop
-:x :y :z 3dup .stack
+[ :r 0 :g 0 :b 0 :a 0 ]map
+} :<color>,black @
 
-{ dup exec exec
-} :twice @
+{ ; ( c1 c2 -- c3 )
+:b @local
+:a @local
+[ :r a b { :r swap mget } bi^ +
+  :g a b { :g swap mget } bi^ +
+  :b a b { :b swap mget } bi^ +
+  :a a b { :a swap mget } bi^ +
+]map
+} :color+ @
 
-{ "hello" print
-} :hello @
+;
 
-:hello twice
+{ ; ( vec -- min max )
+vlen 0 swap
+} :vbounds @
 
-1 2 3 { + } dip
-print-stack
+;
 
-1 2 3 { + } keep
-print-stack
-
-1 2 3 { + } 2keep
-print-stack
-
-1 2 3 { + } 3keep
-print-stack
-
-1.0 { 1 + } { 2 - } { 5 / } tri
-print-stack
-
-2 10 5 20 { + } { * } 2bi*
-print-stack
-
-} drop
+{ ; ( vec -- anim )
+[ swap :frames swap
+       :at 0 ]map
+} :<anim> @
 
 {
-[ :north :south
-  :south :north
-  :east :west
-  :west :east
-]map :_opposite-direction @
+{ anim-frames <vec>,free } keep
+<map>,free
+} :<anim>,free @
+
+{ ]vec <anim> } :]anim @
+
+{ :frames swap mget } :anim-frames @
+{ :at swap mget } :anim-at @
+{ :at swap mset! } :anim-at! @
 
 {
-_opposite-direction mget
-} :opposite-direction @
+{ anim-at } { anim-frames } bi vget
+} :anim-peek @
 
-:north opposite-direction .
-:south opposite-direction .
-:east opposite-direction .
-:west opposite-direction .
-.stack
-2drop 2drop
-.stack
-} drop
+{ ; ( adv anim -- )
+swap
+{ dup { anim-frames vbounds } { anim-at } bi } dip
++ wrap
+swap anim-at!
+} :anim-advance! @
+
+{ { 1 swap anim-advance! } keep anim-peek } :anim-next! @
+{ { -1 swap anim-advance! } keep anim-peek } :anim-prev! @
+
+;
+
+[
+" (oo"
+" (oo"
+"*(oo"
+]anim
+
+"start" print
+{ anim-next! print } keep
+{ anim-next! print } keep
+{ anim-next! print } keep
+{ anim-next! print } keep
+{ anim-next! print } keep
+"2" print
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+{ anim-prev! print } keep
+
+<anim>,free
