@@ -109,6 +109,24 @@ swap mod +
 
 ; =====
 
+; errors and optionals
+; error:
+;  ok-val  #t
+;  err-val #f
+; optional:
+;  ok-val #t
+;  #f     #f
+
+{ { } { "panic" . panic } if
+} :unwrap @
+
+; =====
+
+{ mget* drop
+} :mget @
+
+; =====
+
 #sentinel :[ @
 
 { dup #sentinel eq? { drop <R } { .R vpush! ]vec' } if

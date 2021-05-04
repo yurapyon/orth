@@ -55,6 +55,7 @@ const ascii = std.ascii;
 // better int parser
 //   hex ints
 // better float parser
+//   allow syntax like 1234f
 // certain things cant be symbols
 //   because symbols are what you use to name functions and stuff
 // vm should have log/print functions or something

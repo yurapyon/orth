@@ -6,11 +6,6 @@
 vlen 0 swap
 } :vbounds @
 
-[ 1 2 3 ]vec :vec @
-vec vbounds .stack
-
-{
-
 {
 [ :r 1 :g 1 :b 1 :a 1 ]map
 } :<color>,white @
@@ -39,11 +34,6 @@ vec vbounds .stack
        :at 0 ]map
 } :<anim> @
 
-{
-{ anim-frames <vec>,free } keep
-<map>,free
-} :<anim>,free @
-
 { ]vec <anim> } :]anim @
 
 { :frames swap mget } :anim-frames @
@@ -66,25 +56,29 @@ swap anim-at!
 
 ;
 
-[
-" (oa"
-" (ob"
-"*(oc"
-]anim
+[ " (oa" " (ob" "*(oc" ]anim
+; [ " (oa" " (ob" "*(oc" ]vec [ swap :frames swap ]map
+; [ " (oa" " (ob" "*(oc" ]vec :blah <map> { mset! } keep
+; [ [ 1 2 ]vec 3 4 ]vec
 
-"start" print
-{ anim-next! print } keep
-{ anim-next! print } keep
-{ anim-next! print } keep
-{ anim-next! print } keep
-{ anim-next! print } keep
-"2" print
-{ anim-prev! print } keep
-{ anim-prev! print } keep
-{ anim-prev! print } keep
-{ anim-prev! print } keep
-{ anim-prev! print } keep
+dup
+:at swap mget* { drop "hello" } when
+.stack
 
-<anim>,free
+; drop
 
-} drop
+; <anim>
+; :a @
+
+; "start" print
+; { anim-next! print } keep
+; { anim-next! print } keep
+; { anim-next! print } keep
+; { anim-next! print } keep
+; { anim-next! print } keep
+; "2" print
+; { anim-prev! print } keep
+; { anim-prev! print } keep
+; { anim-prev! print } keep
+; { anim-prev! print } keep
+; { anim-prev! print } keep

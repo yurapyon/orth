@@ -31,7 +31,7 @@ pub fn something(allocator: *Allocator) !void {
     }
 
     _ = try vm.installFFI_Type(builtins.ft_vec.ft);
-    // _ = try vm.installFFI_Type(builtins.ft_proto.ft);
+    _ = try vm.installFFI_Type(builtins.ft_proto.ft);
 
     var base_f = try readFile(allocator, "src/base.orth");
     defer allocator.free(base_f);
@@ -73,7 +73,10 @@ pub fn something(allocator: *Allocator) !void {
                 std.log.info("word not found: {}", .{vm.error_info.word_not_found});
                 return;
             },
-            else => return err,
+            else => {
+                std.log.info("err: {}", .{err});
+                return;
+            },
         }
     };
 }

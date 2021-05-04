@@ -15,8 +15,10 @@ usingnamespace lib;
 //     map fold
 //     curry compose
 //   math stuff
-//     operators for ints and floats shouldnt coerse to float
+//     handle integer overflow
 //     fract
+//   type checking
+//     float? int? etc
 //   printing functions
 //     display
 //     write
@@ -28,8 +30,6 @@ usingnamespace lib;
 // functions
 //   bitwise operators
 //   string manipulation
-//   type checking
-//     float? int? etc
 
 //;
 
@@ -118,17 +118,10 @@ pub fn f_negative(vm: *VM) EvalError!void {
 pub fn f_plus(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Int = ai + bi }),
-            .Float => |af| try vm.stack.push(.{ .Float = af + @intToFloat(f32, bi) }),
-            else => return error.TypeError,
-        },
-        .Float => |bf| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Float = @intToFloat(f32, ai) + bf }),
-            .Float => |af| try vm.stack.push(.{ .Float = af + bf }),
-            else => return error.TypeError,
-        },
+        .Int => |i| try vm.stack.push(.{ .Int = a.Int + i }),
+        .Float => |f| try vm.stack.push(.{ .Float = a.Float + f }),
         else => return error.TypeError,
     }
 }
@@ -136,17 +129,10 @@ pub fn f_plus(vm: *VM) EvalError!void {
 pub fn f_minus(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Int = ai - bi }),
-            .Float => |af| try vm.stack.push(.{ .Float = af - @intToFloat(f32, bi) }),
-            else => return error.TypeError,
-        },
-        .Float => |bf| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Float = @intToFloat(f32, ai) - bf }),
-            .Float => |af| try vm.stack.push(.{ .Float = af - bf }),
-            else => return error.TypeError,
-        },
+        .Int => |i| try vm.stack.push(.{ .Int = a.Int - i }),
+        .Float => |f| try vm.stack.push(.{ .Float = a.Float - f }),
         else => return error.TypeError,
     }
 }
@@ -154,17 +140,10 @@ pub fn f_minus(vm: *VM) EvalError!void {
 pub fn f_times(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Int = ai * bi }),
-            .Float => |af| try vm.stack.push(.{ .Float = af * @intToFloat(f32, bi) }),
-            else => return error.TypeError,
-        },
-        .Float => |bf| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Float = @intToFloat(f32, ai) * bf }),
-            .Float => |af| try vm.stack.push(.{ .Float = af * bf }),
-            else => return error.TypeError,
-        },
+        .Int => |i| try vm.stack.push(.{ .Int = a.Int * i }),
+        .Float => |f| try vm.stack.push(.{ .Float = a.Float * f }),
         else => return error.TypeError,
     }
 }
@@ -172,22 +151,15 @@ pub fn f_times(vm: *VM) EvalError!void {
 pub fn f_divide(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| {
-            if (bi == 0) return error.DivideByZero;
-            switch (a) {
-                .Int => |ai| try vm.stack.push(.{ .Int = @divTrunc(ai, bi) }),
-                .Float => |af| try vm.stack.push(.{ .Float = af / @intToFloat(f32, bi) }),
-                else => return error.TypeError,
-            }
+        .Int => |i| {
+            if (i == 0) return error.DivideByZero;
+            try vm.stack.push(.{ .Int = @divTrunc(a.Int, i) });
         },
-        .Float => |bf| {
-            if (bf == 0) return error.DivideByZero;
-            switch (a) {
-                .Int => |ai| try vm.stack.push(.{ .Float = @intToFloat(f32, ai) / bf }),
-                .Float => |af| try vm.stack.push(.{ .Float = af / bf }),
-                else => return error.TypeError,
-            }
+        .Float => |f| {
+            if (f == 0) return error.DivideByZero;
+            try vm.stack.push(.{ .Float = a.Float / f });
         },
         else => return error.TypeError,
     }
@@ -196,24 +168,17 @@ pub fn f_divide(vm: *VM) EvalError!void {
 pub fn f_mod(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| {
-            if (bi == 0) return error.DivideByZero;
-            if (bi < 0) return error.NegativeDenominator;
-            switch (a) {
-                .Int => |ai| try vm.stack.push(.{ .Int = @mod(ai, bi) }),
-                .Float => |af| try vm.stack.push(.{ .Float = @mod(af, @intToFloat(f32, bi)) }),
-                else => return error.TypeError,
-            }
+        .Int => |i| {
+            if (i == 0) return error.DivideByZero;
+            if (i < 0) return error.NegativeDenominator;
+            try vm.stack.push(.{ .Int = @mod(a.Int, i) });
         },
-        .Float => |bf| {
-            if (bf == 0) return error.DivideByZero;
-            if (bf < 0) return error.NegativeDenominator;
-            switch (a) {
-                .Int => |ai| try vm.stack.push(.{ .Float = @mod(@intToFloat(f32, ai), bf) }),
-                .Float => |af| try vm.stack.push(.{ .Float = @mod(af, bf) }),
-                else => return error.TypeError,
-            }
+        .Float => |f| {
+            if (f == 0) return error.DivideByZero;
+            if (f < 0) return error.NegativeDenominator;
+            try vm.stack.push(.{ .Float = @mod(a.Float, f) });
         },
         else => return error.TypeError,
     }
@@ -222,24 +187,17 @@ pub fn f_mod(vm: *VM) EvalError!void {
 pub fn f_rem(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| {
-            if (bi == 0) return error.DivideByZero;
-            if (bi < 0) return error.NegativeDenominator;
-            switch (a) {
-                .Int => |ai| try vm.stack.push(.{ .Int = @rem(ai, bi) }),
-                .Float => |af| try vm.stack.push(.{ .Float = @rem(af, @intToFloat(f32, bi)) }),
-                else => return error.TypeError,
-            }
+        .Int => |i| {
+            if (i == 0) return error.DivideByZero;
+            if (i < 0) return error.NegativeDenominator;
+            try vm.stack.push(.{ .Int = @rem(a.Int, i) });
         },
-        .Float => |bf| {
-            if (bf == 0) return error.DivideByZero;
-            if (bf < 0) return error.NegativeDenominator;
-            switch (a) {
-                .Int => |ai| try vm.stack.push(.{ .Float = @rem(@intToFloat(f32, ai), bf) }),
-                .Float => |af| try vm.stack.push(.{ .Float = @rem(af, bf) }),
-                else => return error.TypeError,
-            }
+        .Float => |f| {
+            if (f == 0) return error.DivideByZero;
+            if (f < 0) return error.NegativeDenominator;
+            try vm.stack.push(.{ .Float = @rem(a.Float, f) });
         },
         else => return error.TypeError,
     }
@@ -248,17 +206,10 @@ pub fn f_rem(vm: *VM) EvalError!void {
 pub fn f_lt(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Boolean = ai < bi }),
-            .Float => |af| try vm.stack.push(.{ .Boolean = af < @intToFloat(f32, bi) }),
-            else => return error.TypeError,
-        },
-        .Float => |bf| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) < bf }),
-            .Float => |af| try vm.stack.push(.{ .Boolean = af < bf }),
-            else => return error.TypeError,
-        },
+        .Int => |i| try vm.stack.push(.{ .Boolean = a.Int < i }),
+        .Float => |f| try vm.stack.push(.{ .Boolean = a.Float < f }),
         else => return error.TypeError,
     }
 }
@@ -266,17 +217,10 @@ pub fn f_lt(vm: *VM) EvalError!void {
 pub fn f_lte(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Boolean = ai <= bi }),
-            .Float => |af| try vm.stack.push(.{ .Boolean = af <= @intToFloat(f32, bi) }),
-            else => return error.TypeError,
-        },
-        .Float => |bf| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) <= bf }),
-            .Float => |af| try vm.stack.push(.{ .Boolean = af <= bf }),
-            else => return error.TypeError,
-        },
+        .Int => |i| try vm.stack.push(.{ .Boolean = a.Int <= i }),
+        .Float => |f| try vm.stack.push(.{ .Boolean = a.Float <= f }),
         else => return error.TypeError,
     }
 }
@@ -284,17 +228,10 @@ pub fn f_lte(vm: *VM) EvalError!void {
 pub fn f_gt(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Boolean = ai > bi }),
-            .Float => |af| try vm.stack.push(.{ .Boolean = af > @intToFloat(f32, bi) }),
-            else => return error.TypeError,
-        },
-        .Float => |bf| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) > bf }),
-            .Float => |af| try vm.stack.push(.{ .Boolean = af > bf }),
-            else => return error.TypeError,
-        },
+        .Int => |i| try vm.stack.push(.{ .Boolean = a.Int > i }),
+        .Float => |f| try vm.stack.push(.{ .Boolean = a.Float > f }),
         else => return error.TypeError,
     }
 }
@@ -302,17 +239,10 @@ pub fn f_gt(vm: *VM) EvalError!void {
 pub fn f_gte(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Boolean = ai >= bi }),
-            .Float => |af| try vm.stack.push(.{ .Boolean = af >= @intToFloat(f32, bi) }),
-            else => return error.TypeError,
-        },
-        .Float => |bf| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) >= bf }),
-            .Float => |af| try vm.stack.push(.{ .Boolean = af >= bf }),
-            else => return error.TypeError,
-        },
+        .Int => |i| try vm.stack.push(.{ .Boolean = a.Int >= i }),
+        .Float => |f| try vm.stack.push(.{ .Boolean = a.Float >= f }),
         else => return error.TypeError,
     }
 }
@@ -320,19 +250,24 @@ pub fn f_gte(vm: *VM) EvalError!void {
 pub fn f_number_equal(vm: *VM) EvalError!void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
     switch (b) {
-        .Int => |bi| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Boolean = ai == bi }),
-            .Float => |af| try vm.stack.push(.{ .Boolean = af == @intToFloat(f32, bi) }),
-            else => return error.TypeError,
-        },
-        .Float => |bf| switch (a) {
-            .Int => |ai| try vm.stack.push(.{ .Boolean = @intToFloat(f32, ai) == bf }),
-            .Float => |af| try vm.stack.push(.{ .Boolean = af == bf }),
-            else => return error.TypeError,
-        },
+        .Int => |i| try vm.stack.push(.{ .Boolean = a.Int == i }),
+        .Float => |f| try vm.stack.push(.{ .Boolean = a.Float == f }),
         else => return error.TypeError,
     }
+}
+
+pub fn f_float_to_int(vm: *VM) EvalError!void {
+    const a = try vm.stack.pop();
+    if (a != .Float) return error.TypeError;
+    try vm.stack.push(.{ .Int = @floatToInt(i32, a.Float) });
+}
+
+pub fn f_int_to_float(vm: *VM) EvalError!void {
+    const a = try vm.stack.pop();
+    if (a != .Int) return error.TypeError;
+    try vm.stack.push(.{ .Float = @intToFloat(f32, a.Int) });
 }
 
 // conditionals ===
@@ -345,10 +280,10 @@ pub fn f_choose(vm: *VM) EvalError!void {
     switch (condition) {
         .Boolean => |b| {
             if (b) {
-                try vm.stack.push(if_true.clone());
+                try vm.stack.push(if_true);
                 if (if_false == .Ref) _ = if_false.Ref.rc.dec(vm);
             } else {
-                try vm.stack.push(if_false.clone());
+                try vm.stack.push(if_false);
                 if (if_true == .Ref) _ = if_true.Ref.rc.dec(vm);
             }
         },
@@ -359,6 +294,8 @@ pub fn f_choose(vm: *VM) EvalError!void {
 pub fn f_equal(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     const b = try vm.stack.pop();
+    if (a == .Ref) _ = a.Ref.rc.dec(vm);
+    if (b == .Ref) _ = b.Ref.rc.dec(vm);
     const are_equal = if (@as(@TagType(Value), a) == b) switch (a) {
         .Int => |val| val == b.Int,
         .Float => |val| val == b.Float,
@@ -384,16 +321,16 @@ pub fn f_not(vm: *VM) EvalError!void {
 
 pub fn f_and(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
-    if (a != .Boolean) return error.TypeError;
     const b = try vm.stack.pop();
+    if (a != .Boolean) return error.TypeError;
     if (b != .Boolean) return error.TypeError;
     try vm.stack.push(.{ .Boolean = a.Boolean and b.Boolean });
 }
 
 pub fn f_or(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
-    if (a != .Boolean) return error.TypeError;
     const b = try vm.stack.pop();
+    if (a != .Boolean) return error.TypeError;
     if (b != .Boolean) return error.TypeError;
     try vm.stack.push(.{ .Boolean = a.Boolean or b.Boolean });
 }
@@ -543,7 +480,7 @@ pub const ft_vec = struct {
         if (!ref.Ref.rc.dec(vm)) return;
 
         var arr = ref.Ref.rc.cast(ArrayList(Value));
-        try arr.append(val.clone());
+        try arr.append(val);
     }
 
     pub fn _get(vm: *VM) EvalError!void {
@@ -592,10 +529,10 @@ pub const ft_proto = struct {
 
     const Map = std.AutoHashMap(usize, Value);
 
-    pub const ft = FFI_TypeDefinition(Map, display, null, null);
+    pub const ft = FFI_TypeDefinition(Map, display, null, finalize);
 
-    pub fn display(vm: *VM, p: FFI_Rc.Ref) void {
-        const map = p.cast(Map);
+    pub fn display(vm: *VM, rc: *FFI_Rc) void {
+        const map = rc.cast(Map);
         std.debug.print("m[ ", .{});
         var iter = map.iterator();
         while (iter.next()) |entry| {
@@ -606,36 +543,65 @@ pub const ft_proto = struct {
         std.debug.print("]", .{});
     }
 
+    pub fn finalize(vm: *VM, rc: *FFI_Rc) void {
+        var map = rc.cast(Map);
+        var iter = map.iterator();
+        while (iter.next()) |entry| {
+            var val = entry.value;
+            if (val == .Ref) {
+                _ = val.Ref.rc.dec(vm);
+            }
+        }
+        map.deinit();
+        vm.allocator.destroy(map);
+    }
+
     //;
 
     pub fn _make(vm: *VM) EvalError!void {
-        var obj = try vm.allocator.create(Map);
-        obj.* = Map.init(vm.allocator);
-        try vm.stack.push(Self.ft.makePtr(obj));
-    }
+        var map = try vm.allocator.create(Map);
+        errdefer vm.allocator.destroy(map);
+        map.* = Map.init(vm.allocator);
 
-    pub fn _free(vm: *VM) EvalError!void {
-        var ptr = try Self.ft.getTypedPointer(try vm.stack.pop());
-        ptr.deinit();
-        vm.allocator.destroy(ptr);
+        var rc = try vm.allocator.create(FFI_Rc);
+        rc.* = Self.ft.makeRc(map);
+        errdefer vm.allocator.destroy(rc);
+
+        try vm.stack.push(.{ .Ref = rc.ref() });
     }
 
     pub fn _set(vm: *VM) EvalError!void {
-        var ptr = try Self.ft.getTypedPointer(try vm.stack.pop());
+        const ref = try vm.stack.pop();
         const sym = try vm.stack.pop();
-        if (sym != .Symbol) return error.TypeError;
         const value = try vm.stack.pop();
+        try Self.ft.checkType(ref);
+        if (sym != .Symbol) return error.TypeError;
+
+        if (!ref.Ref.rc.dec(vm)) return;
+
+        var map = ref.Ref.rc.cast(Map);
+
         // TODO handle overwrite
-        try ptr.put(sym.Symbol, value);
+        try map.put(sym.Symbol, value);
     }
 
     pub fn _get(vm: *VM) EvalError!void {
-        var ptr = try Self.ft.getTypedPointer(try vm.stack.pop());
+        const ref = try vm.stack.pop();
         const sym = try vm.stack.pop();
+        try Self.ft.checkType(ref);
         if (sym != .Symbol) return error.TypeError;
-        // TODO handle not found
-        //        should probably return a result
-        try vm.stack.push(ptr.get(sym.Symbol).?);
+
+        if (!ref.Ref.rc.dec(vm)) return;
+
+        var map = ref.Ref.rc.cast(Map);
+
+        if (map.get(sym.Symbol)) |val| {
+            try vm.stack.push(val.clone());
+            try vm.stack.push(.{ .Boolean = true });
+        } else {
+            try vm.stack.push(.{ .Boolean = false });
+            try vm.stack.push(.{ .Boolean = false });
+        }
     }
 };
 
@@ -725,6 +691,14 @@ pub const builtins = [_]struct {
     .{
         .name = "=",
         .func = f_number_equal,
+    },
+    .{
+        .name = "float>int",
+        .func = f_float_to_int,
+    },
+    .{
+        .name = "int>float",
+        .func = f_int_to_float,
     },
 
     .{
@@ -828,20 +802,16 @@ pub const builtins = [_]struct {
         .func = ft_vec._reverse_in_place,
     },
 
-    //     .{
-    //         .name = "<map>",
-    //         .func = ft_proto._make,
-    //     },
-    //     .{
-    //         .name = "<map>,free",
-    //         .func = ft_proto._free,
-    //     },
-    //     .{
-    //         .name = "mget",
-    //         .func = ft_proto._get,
-    //     },
-    //     .{
-    //         .name = "mset!",
-    //         .func = ft_proto._set,
-    //     },
+    .{
+        .name = "<map>",
+        .func = ft_proto._make,
+    },
+    .{
+        .name = "mget*",
+        .func = ft_proto._get,
+    },
+    .{
+        .name = "mset!",
+        .func = ft_proto._set,
+    },
 };
