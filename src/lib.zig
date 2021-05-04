@@ -20,14 +20,18 @@ const ascii = std.ascii;
 //   multiline comments?
 //     could use ( )
 // memory management
-//   think about using reference counting for string quotations and ptrs
-//       being on the stack or in word_table counts as a reference
-//       could do manual memory management but i imagine that would get hard
-//     string and quotation could be a *Cow(_) but, that complicates memory management
-//       would be better if they were Rc(Cow(_))
 //   currently literals returned from parser need to stay around while vm is evaluating
 //     would be nice if this wasnt the case ?
 //     this goes along with copying strings and symbols and keeping them in the vm
+//   rc
+//     locals have to account for rc
+//     now that i have Rcs is there a way that i could pass unmanaged ptrs
+//       and have the same functions work on those
+//     reference counting for strings quotations
+//         being on the stack or in word_table counts as a reference
+//         could do manual memory management but i imagine that would get hard
+//       string and quotation could be a *Cow(_) but, that complicates memory management
+//         would be better if they were Rc(Cow(_))
 
 // TODO want
 // error reporting
@@ -200,6 +204,8 @@ pub fn Stack(comptime T: type) type {
     };
 }
 
+//;
+
 pub const Token = struct {
     pub const Type = enum {
         String,
@@ -222,100 +228,154 @@ pub const Literal = union(enum) {
     QuoteClose,
 };
 
-pub const ForeignFn = fn (vm: *VM) EvalError!void;
+//;
 
-pub const ForeignFnPtr = struct {
+pub const FFI_Fn = struct {
+    pub const Function = fn (vm: *VM) EvalError!void;
+
     name: usize,
-    func: ForeignFn,
+    func: Function,
 };
 
-// TODO maybe just rename to Pointer
-pub const ForeignPtr = struct {
-    const Self = @This();
-    pub const Ptr = opaque {};
-
-    ty: usize,
-    ptr: *Ptr,
-
-    pub fn cast(self: Self, comptime T: type) *T {
-        return @ptrCast(*T, @alignCast(@alignOf(T), self.ptr));
-    }
-};
-
-pub fn ForeignTypeDef(
+pub fn FFI_TypeDefinition(
     comptime T: type,
-    comptime display_fn_: ?fn (*VM, ForeignPtr) void,
-    comptime equals_fn_: ?fn (*VM, ForeignPtr, ForeignPtr) bool,
+    comptime display_fn_: ?fn (*VM, *FFI_Rc) void,
+    comptime equals_fn_: ?fn (*VM, *FFI_Rc, *FFI_Rc) bool,
+    comptime finalizer_fn_: ?fn (*VM, *FFI_Rc) void,
 ) type {
     return struct {
         const display_fn = display_fn_ orelse defaultDisplay;
         const equals_fn = equals_fn_ orelse defaultEquals;
+        const finalizer_fn = finalizer_fn_ orelse defaultFinalizer;
 
         var type_id: usize = undefined;
 
-        pub fn foreignType() ForeignType {
+        fn defaultDisplay(vm: *VM, rc: *const FFI_Rc) void {
+            std.debug.print("*<{} {} {}>", .{
+                rc.type_id,
+                rc.data,
+                rc.ref_ct,
+            });
+        }
+
+        fn defaultEquals(vm: *VM, rc1: *const FFI_Rc, rc2: *const FFI_Rc) bool {
+            return rc1 == rc2;
+        }
+
+        fn defaultFinalizer(vm: *VM, rc: *FFI_Rc) void {}
+
+        //;
+
+        fn getAsFFI_Type() FFI_Type {
             return .{
                 .display_fn = display_fn,
                 .equals_fn = equals_fn,
+                .finalizer_fn = finalizer_fn,
             };
         }
 
-        fn defaultDisplay(vm: *VM, p: ForeignPtr) void {
-            std.debug.print("*<{} {}>", .{ type_id, p.ptr });
+        pub fn makeRc(obj: *T) FFI_Rc {
+            return FFI_Rc.init(type_id, obj);
         }
 
-        fn defaultEquals(vm: *VM, p1: ForeignPtr, p2: ForeignPtr) bool {
-            return p1.ptr == p2.ptr;
-        }
-
-        pub fn makePtr(obj: *T) Value {
-            return .{
-                .ForeignPtr = .{
-                    .ty = type_id,
-                    .ptr = @ptrCast(*ForeignPtr.Ptr, obj),
-                },
-            };
-        }
-
-        pub fn getField(
-            vm: *VM,
-            comptime ty: []const u8,
-            comptime field: []const u8,
-        ) EvalError!void {
-            const val = try vm.stack.pop();
-            const ptr = try assertValueIsType(val);
-            try vm.stack.push(@unionInit(Value, ty, @field(ptr, field)));
-        }
-
-        pub fn setField(
-            vm: *VM,
-            comptime ty: []const u8,
-            comptime field: []const u8,
-            set_to: Value,
-        ) EvalError!void {
-            const val = try vm.stack.peek();
-            const ptr = try assertValueIsType(val);
-            @field(ptr, field) = @field(set_to, ty);
-        }
-
-        pub fn assertValueIsType(val: Value) EvalError!*T {
-            if (val != .ForeignPtr or
-                val.ForeignPtr.ty != type_id)
-            {
+        pub fn checkType(val: Value) EvalError!void {
+            if (val != .Ref or val.Ref.rc.type_id != type_id) {
                 return error.TypeError;
-            } else {
-                return val.ForeignPtr.cast(T);
             }
         }
+
+        //         pub fn getField(
+        //             vm: *VM,
+        //             comptime ty: []const u8,
+        //             comptime field: []const u8,
+        //         ) EvalError!void {
+        //             const val = try vm.stack.pop();
+        //             const ptr = try assertValueIsType(val);
+        //             try vm.stack.push(@unionInit(Value, ty, @field(ptr, field)));
+        //         }
+        //
+        //         pub fn setField(
+        //             vm: *VM,
+        //             comptime ty: []const u8,
+        //             comptime field: []const u8,
+        //             set_to: Value,
+        //         ) EvalError!void {
+        //             const val = try vm.stack.peek();
+        //             const ptr = try assertValueIsType(val);
+        //             @field(ptr, field) = @field(set_to, ty);
+        //         }
     };
 }
 
-pub const ForeignType = struct {
-    display_fn: fn (*VM, ForeignPtr) void,
-    equals_fn: fn (*VM, ForeignPtr, ForeignPtr) bool,
+pub const FFI_Type = struct {
+    // TODO maybe have these as optionals
+    //   have the vm worry about wether to use default fn or not
+    //   then you can turn speciallized display fns on or off
+    display_fn: fn (*VM, *FFI_Rc) void,
+    equals_fn: fn (*VM, *FFI_Rc, *FFI_Rc) bool,
+    finalizer_fn: fn (*VM, *FFI_Rc) void,
 };
 
+pub const FFI_Rc = struct {
+    const Self = @This();
+
+    pub const Ref = struct {
+        rc: *Self,
+    };
+
+    pub const Ptr = opaque {};
+
+    type_id: usize,
+    data: *Ptr,
+    ref_ct: usize,
+
+    fn init(type_id: usize, obj: anytype) Self {
+        return .{
+            .type_id = type_id,
+            .data = @ptrCast(*Ptr, obj),
+            .ref_ct = 0,
+        };
+    }
+
+    pub fn cast(self: Self, comptime T: type) *T {
+        return @ptrCast(*T, @alignCast(@alignOf(T), self.data));
+    }
+
+    pub fn ref(self: *Self) Ref {
+        self.ref_ct += 1;
+        return .{ .rc = self };
+    }
+
+    // returns if the obj is alive or not
+    pub fn dec(self: *Self, vm: *VM) bool {
+        std.debug.assert(self.ref_ct > 0);
+        self.ref_ct -= 1;
+        const should_free = self.ref_ct == 0;
+        if (should_free) {
+            vm.type_table.items[self.type_id].finalizer_fn(vm, self);
+            vm.allocator.destroy(self);
+        }
+
+        return !should_free;
+    }
+};
+
+// // TODO maybe just rename to Pointer
+// pub const ForeignPtr = struct {
+//     const Self = @This();
+//     pub const Ptr = opaque {};
+//
+//     type_id: usize,
+//     ptr: Rc(Ptr).Ref,
+//
+//     pub fn cast(self: Self, comptime T: type) *T {
+//         return @ptrCast(*T, @alignCast(@alignOf(T), self.ptr));
+//     }
+// };
+//
 pub const Value = union(enum) {
+    const Self = @This();
+
     Int: i32,
     Float: f32,
     Boolean: bool,
@@ -323,9 +383,19 @@ pub const Value = union(enum) {
     String: usize,
     Symbol: usize,
     Quotation: usize,
-    ForeignFnPtr: ForeignFnPtr,
-    ForeignPtr: ForeignPtr,
+    FFI_Fn: FFI_Fn,
+    Ref: FFI_Rc.Ref,
+
+    pub fn clone(self: Self) Self {
+        if (self == .Ref) {
+            return .{ .Ref = self.Ref.rc.ref() };
+        } else {
+            return self;
+        }
+    }
 };
+
+//;
 
 pub const Local = struct {
     name: usize,
@@ -339,7 +409,7 @@ pub const VM = struct {
     error_info: ErrorInfo,
     symbol_table: ArrayList([]const u8),
     word_table: ArrayList(?Value),
-    type_table: ArrayList(ForeignType),
+    type_table: ArrayList(FFI_Type),
     string_table: ArrayList(Cow(u8)),
     quotation_table: ArrayList(Cow(Literal)),
     stack: Stack(Value),
@@ -352,7 +422,7 @@ pub const VM = struct {
             .error_info = undefined,
             .symbol_table = ArrayList([]const u8).init(allocator),
             .word_table = ArrayList(?Value).init(allocator),
-            .type_table = ArrayList(ForeignType).init(allocator),
+            .type_table = ArrayList(FFI_Type).init(allocator),
             .string_table = ArrayList(Cow(u8)).init(allocator),
             .quotation_table = ArrayList(Cow(Literal)).init(allocator),
             .stack = Stack(Value).init(allocator),
@@ -363,6 +433,15 @@ pub const VM = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        for (self.word_table.items) |*val| {
+            if (val.*) |*v| {
+                if (v.* == .Ref) {
+                    self.type_table.items[v.Ref.rc.type_id].finalizer_fn(self, v.Ref.rc);
+                    self.allocator.destroy(v.Ref.rc);
+                }
+            }
+        }
+
         self.locals.deinit();
         self.return_stack.deinit();
         self.stack.deinit();
@@ -389,7 +468,7 @@ pub const VM = struct {
         for (builtins.builtins) |bi| {
             const idx = try vm.internSymbol(bi.name);
             vm.word_table.items[idx] = lib.Value{
-                .ForeignFnPtr = .{
+                .FFI_Fn = .{
                     .name = idx,
                     .func = bi.func,
                 },
@@ -609,16 +688,15 @@ pub const VM = struct {
                 }
                 std.debug.print("}}", .{});
             },
-            .ForeignFnPtr => |val| std.debug.print("fn({})", .{self.symbol_table.items[val.name]}),
-            .ForeignPtr => |ptr| self.type_table.items[ptr.ty].display_fn(self, ptr),
+            .FFI_Fn => |val| std.debug.print("fn({})", .{self.symbol_table.items[val.name]}),
+            .Ref => |ref| self.type_table.items[ref.rc.type_id].display_fn(self, ref.rc),
         }
     }
 
-    pub fn defineForeignType(self: *Self, comptime T: type) Allocator.Error!usize {
+    pub fn installFFI_Type(self: *Self, comptime T: type) Allocator.Error!void {
         const idx = self.type_table.items.len;
-        try self.type_table.append(T.foreignType());
         T.type_id = idx;
-        return idx;
+        try self.type_table.append(T.getAsFFI_Type());
     }
 
     pub fn defineWord(self: *Self, name: []const u8, value: Value) Allocator.Error!void {
@@ -629,8 +707,8 @@ pub const VM = struct {
     pub fn evaluateValue(self: *Self, val: Value) EvalError!void {
         switch (val) {
             .Quotation => |id| try self.eval(self.quotation_table.items[id].get()),
-            .ForeignFnPtr => |fp| try fp.func(self),
-            else => try self.stack.push(val),
+            .FFI_Fn => |fp| try fp.func(self),
+            else => try self.stack.push(val.clone()),
         }
     }
 

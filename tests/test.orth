@@ -2,6 +2,15 @@
 
 ;
 
+{ ; ( vec -- min max )
+vlen 0 swap
+} :vbounds @
+
+[ 1 2 3 ]vec :vec @
+vec vbounds .stack
+
+{
+
 {
 [ :r 1 :g 1 :b 1 :a 1 ]map
 } :<color>,white @
@@ -22,9 +31,6 @@
 
 ;
 
-{ ; ( vec -- min max )
-vlen 0 swap
-} :vbounds @
 
 ;
 
@@ -61,9 +67,9 @@ swap anim-at!
 ;
 
 [
-" (oo"
-" (oo"
-"*(oo"
+" (oa"
+" (ob"
+"*(oc"
 ]anim
 
 "start" print
@@ -80,3 +86,5 @@ swap anim-at!
 { anim-prev! print } keep
 
 <anim>,free
+
+} drop

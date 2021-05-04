@@ -7,6 +7,7 @@ usingnamespace lib;
 //;
 
 // TODO need
+// typecheck after you get all the args u want
 // functions
 //   functional stuff
 //     map function for vecs vs protos should be specialized
@@ -14,7 +15,8 @@ usingnamespace lib;
 //     map fold
 //     curry compose
 //   math stuff
-//     abs fract
+//     operators for ints and floats shouldnt coerse to float
+//     fract
 //   printing functions
 //     display
 //     write
@@ -35,13 +37,15 @@ pub fn f_panic(vm: *VM) EvalError!void {
     return error.Panic;
 }
 
-// TODO cant ude define word here because name is already interned
+// TODO cant use defineWord here because name is already interned
 pub fn f_define(vm: *VM) EvalError!void {
     const name = try vm.stack.pop();
-    if (name != .Symbol) return error.TypeError;
     const value = try vm.stack.pop();
+    if (name != .Symbol) return error.TypeError;
+
     if (vm.word_table.items[name.Symbol]) |prev| {
         // TODO notify of overwrite
+        //  need to handle deleteing the value youre replacing
         vm.word_table.items[name.Symbol] = value;
     } else {
         vm.word_table.items[name.Symbol] = value;
@@ -51,8 +55,9 @@ pub fn f_define(vm: *VM) EvalError!void {
 pub fn f_ref(vm: *VM) EvalError!void {
     const name = try vm.stack.pop();
     if (name != .Symbol) return error.TypeError;
+
     if (vm.word_table.items[name.Symbol]) |val| {
-        try vm.stack.push(val);
+        try vm.stack.push(val.clone());
     } else {
         vm.error_info.word_not_found = vm.symbol_table.items[name.Symbol];
         return error.WordNotFound;
@@ -75,11 +80,12 @@ pub fn f_define_local(vm: *VM) EvalError!void {
 
 pub fn f_eval(vm: *VM) EvalError!void {
     const val = try vm.stack.pop();
-    if (val != .Quotation and val != .ForeignFnPtr) return error.TypeError;
+    if (val != .Quotation and val != .FFI_Fn) return error.TypeError;
     try vm.evaluateValue(val);
 }
 
 pub fn f_clear_stack(vm: *VM) EvalError!void {
+    // TODO handle rc
     vm.stack.data.items.len = 0;
 }
 
@@ -338,7 +344,13 @@ pub fn f_choose(vm: *VM) EvalError!void {
     if (condition != .Boolean) return error.TypeError;
     switch (condition) {
         .Boolean => |b| {
-            try vm.stack.push(if (b) if_true else if_false);
+            if (b) {
+                try vm.stack.push(if_true.clone());
+                if (if_false == .Ref) _ = if_false.Ref.rc.dec(vm);
+            } else {
+                try vm.stack.push(if_false.clone());
+                if (if_true == .Ref) _ = if_true.Ref.rc.dec(vm);
+            }
         },
         else => return error.TypeError,
     }
@@ -356,10 +368,10 @@ pub fn f_equal(vm: *VM) EvalError!void {
         // TODO
         .String => false,
         .Quotation => false,
-        .ForeignFnPtr => |ptr| ptr.name == b.ForeignFnPtr.name and
-            ptr.func == b.ForeignFnPtr.func,
-        .ForeignPtr => |ptr| ptr.ty == b.ForeignPtr.ty and
-            vm.type_table.items[ptr.ty].equals_fn(vm, a.ForeignPtr, b.ForeignPtr),
+        .FFI_Fn => |ptr| ptr.name == b.FFI_Fn.name and
+            ptr.func == b.FFI_Fn.func,
+        // TODO
+        .Ref => false,
     } else false;
     try vm.stack.push(.{ .Boolean = are_equal });
 }
@@ -397,41 +409,49 @@ pub fn f_from_r(vm: *VM) EvalError!void {
 }
 
 pub fn f_peek_r(vm: *VM) EvalError!void {
-    try vm.stack.push(try vm.return_stack.peek());
+    try vm.stack.push((try vm.return_stack.peek()).clone());
 }
 
 // shuffle ===
 
 pub fn f_drop(vm: *VM) EvalError!void {
-    _ = try vm.stack.pop();
+    const val = try vm.stack.pop();
+    if (val == .Ref) _ = val.Ref.rc.dec(vm);
 }
 
 pub fn f_dup(vm: *VM) EvalError!void {
-    try vm.stack.push(try vm.stack.peek());
+    const val = try vm.stack.peek();
+    try vm.stack.push(val.clone());
 }
 
 pub fn f_2dup(vm: *VM) EvalError!void {
-    try vm.stack.push(try vm.stack.index(1));
-    try vm.stack.push(try vm.stack.index(1));
+    const val = try vm.stack.peek();
+    try vm.stack.push(val.clone());
+    try vm.stack.push(val.clone());
 }
 
 pub fn f_3dup(vm: *VM) EvalError!void {
-    try vm.stack.push(try vm.stack.index(2));
-    try vm.stack.push(try vm.stack.index(2));
-    try vm.stack.push(try vm.stack.index(2));
+    const val = try vm.stack.peek();
+    try vm.stack.push(val.clone());
+    try vm.stack.push(val.clone());
+    try vm.stack.push(val.clone());
 }
 
 pub fn f_over(vm: *VM) EvalError!void {
-    try vm.stack.push(try vm.stack.index(1));
+    const val = try vm.stack.index(1);
+    try vm.stack.push(val.clone());
 }
 
 pub fn f_2over(vm: *VM) EvalError!void {
-    try vm.stack.push(try vm.stack.index(2));
-    try vm.stack.push(try vm.stack.index(2));
+    const v1 = try vm.stack.index(1);
+    const v2 = try vm.stack.index(2);
+    try vm.stack.push(v2.clone());
+    try vm.stack.push(v1.clone());
 }
 
 pub fn f_pick(vm: *VM) EvalError!void {
-    try vm.stack.push(try vm.stack.index(2));
+    const val = try vm.stack.index(2);
+    try vm.stack.push(val.clone());
 }
 
 pub fn f_swap(vm: *VM) EvalError!void {
@@ -462,68 +482,100 @@ pub fn f_neg_rot(vm: *VM) EvalError!void {
 
 pub fn f_dip(vm: *VM) EvalError!void {
     const quot = try vm.stack.pop();
-    if (quot != .Quotation) return error.TypeError;
     const restore = try vm.stack.pop();
+    if (quot != .Quotation) return error.TypeError;
     try vm.eval(vm.quotation_table.items[quot.Quotation].get());
     try vm.stack.push(restore);
 }
 
 // vec ===
 
-pub const Vec = struct {
+pub const ft_vec = struct {
     const Self = @This();
 
-    pub const ft = ForeignTypeDef(ArrayList(Value), display, equals);
+    pub const ft = FFI_TypeDefinition(ArrayList(Value), display, equals, finalize);
 
-    pub fn display(vm: *VM, p: ForeignPtr) void {
-        const vec = p.cast(ArrayList(Value));
+    pub fn display(vm: *VM, rc: *FFI_Rc) void {
+        const arr = rc.cast(ArrayList(Value));
         std.debug.print("v[ ", .{});
-        for (vec.items) |v| {
+        for (arr.items) |v| {
             vm.nicePrintValue(v);
             std.debug.print(" ", .{});
         }
         std.debug.print("]", .{});
     }
 
-    pub fn equals(vm: *VM, p1: ForeignPtr, p2: ForeignPtr) bool {
+    pub fn equals(vm: *VM, rc1: *FFI_Rc, rc2: *FFI_Rc) bool {
         // TODO
         return false;
+    }
+
+    pub fn finalize(vm: *VM, rc: *FFI_Rc) void {
+        var arr = rc.cast(ArrayList(Value));
+        for (arr.items) |val| {
+            if (val == .Ref) {
+                _ = val.Ref.rc.dec(vm);
+            }
+        }
+        arr.deinit();
+        vm.allocator.destroy(arr);
     }
 
     //;
 
     pub fn _make(vm: *VM) EvalError!void {
-        var obj = try vm.allocator.create(ArrayList(Value));
-        obj.* = ArrayList(Value).init(vm.allocator);
-        try vm.stack.push(Vec.ft.makePtr(obj));
-    }
+        var arr = try vm.allocator.create(ArrayList(Value));
+        errdefer vm.allocator.destroy(arr);
+        arr.* = ArrayList(Value).init(vm.allocator);
 
-    pub fn _free(vm: *VM) EvalError!void {
-        var ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
-        ptr.deinit();
-        vm.allocator.destroy(ptr);
+        var rc = try vm.allocator.create(FFI_Rc);
+        rc.* = Self.ft.makeRc(arr);
+        errdefer vm.allocator.destroy(rc);
+
+        try vm.stack.push(.{ .Ref = rc.ref() });
     }
 
     pub fn _push(vm: *VM) EvalError!void {
-        var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
+        const ref = try vm.stack.pop();
         const val = try vm.stack.pop();
-        try vec_ptr.append(val);
+        try Self.ft.checkType(ref);
+
+        if (!ref.Ref.rc.dec(vm)) return;
+
+        var arr = ref.Ref.rc.cast(ArrayList(Value));
+        try arr.append(val.clone());
     }
 
     pub fn _get(vm: *VM) EvalError!void {
-        var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
+        const ref = try vm.stack.pop();
         const idx = try vm.stack.pop();
-        try vm.stack.push(vec_ptr.items[@intCast(usize, idx.Int)]);
+        try Self.ft.checkType(ref);
+        if (idx != .Int) return error.TypeError;
+
+        if (!ref.Ref.rc.dec(vm)) return;
+
+        var arr = ref.Ref.rc.cast(ArrayList(Value));
+        try vm.stack.push(arr.items[@intCast(usize, idx.Int)]);
     }
 
     pub fn _len(vm: *VM) EvalError!void {
-        var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
-        try vm.stack.push(.{ .Int = @intCast(i32, vec_ptr.items.len) });
+        const ref = try vm.stack.pop();
+        try Self.ft.checkType(ref);
+
+        if (!ref.Ref.rc.dec(vm)) return;
+
+        var arr = ref.Ref.rc.cast(ArrayList(Value));
+        try vm.stack.push(.{ .Int = @intCast(i32, arr.items.len) });
     }
 
     pub fn _reverse_in_place(vm: *VM) EvalError!void {
-        var vec_ptr = try Vec.ft.assertValueIsType(try vm.stack.pop());
-        std.mem.reverse(Value, vec_ptr.items);
+        const ref = try vm.stack.pop();
+        try Self.ft.checkType(ref);
+
+        if (!ref.Ref.rc.dec(vm)) return;
+
+        var arr = ref.Ref.rc.cast(ArrayList(Value));
+        std.mem.reverse(Value, arr.items);
     }
 };
 
@@ -535,44 +587,14 @@ pub const Vec = struct {
 //   and mref should just push it
 // rename maps to 'prototypes' maybe because theyre supposed to be used for more than just hashtable stuff
 // equals
-pub const Proto = struct {
+pub const ft_proto = struct {
     const Self = @This();
 
     const Map = std.AutoHashMap(usize, Value);
 
-    pub const ft = ForeignTypeDef(Map, display, null);
+    pub const ft = FFI_TypeDefinition(Map, display, null, null);
 
-    pub fn _make(vm: *VM) EvalError!void {
-        var obj = try vm.allocator.create(Map);
-        obj.* = Map.init(vm.allocator);
-        try vm.stack.push(Self.ft.makePtr(obj));
-    }
-
-    pub fn _free(vm: *VM) EvalError!void {
-        var ptr = try Self.ft.assertValueIsType(try vm.stack.pop());
-        ptr.deinit();
-        vm.allocator.destroy(ptr);
-    }
-
-    pub fn _set(vm: *VM) EvalError!void {
-        var ptr = try Self.ft.assertValueIsType(try vm.stack.pop());
-        const sym = try vm.stack.pop();
-        if (sym != .Symbol) return error.TypeError;
-        const value = try vm.stack.pop();
-        // TODO handle overwrite
-        try ptr.put(sym.Symbol, value);
-    }
-
-    pub fn _get(vm: *VM) EvalError!void {
-        var ptr = try Self.ft.assertValueIsType(try vm.stack.pop());
-        const sym = try vm.stack.pop();
-        if (sym != .Symbol) return error.TypeError;
-        // TODO handle not found
-        //        should probably return a result
-        try vm.stack.push(ptr.get(sym.Symbol).?);
-    }
-
-    pub fn display(vm: *VM, p: ForeignPtr) void {
+    pub fn display(vm: *VM, p: FFI_Rc.Ref) void {
         const map = p.cast(Map);
         std.debug.print("m[ ", .{});
         var iter = map.iterator();
@@ -583,13 +605,45 @@ pub const Proto = struct {
         }
         std.debug.print("]", .{});
     }
+
+    //;
+
+    pub fn _make(vm: *VM) EvalError!void {
+        var obj = try vm.allocator.create(Map);
+        obj.* = Map.init(vm.allocator);
+        try vm.stack.push(Self.ft.makePtr(obj));
+    }
+
+    pub fn _free(vm: *VM) EvalError!void {
+        var ptr = try Self.ft.getTypedPointer(try vm.stack.pop());
+        ptr.deinit();
+        vm.allocator.destroy(ptr);
+    }
+
+    pub fn _set(vm: *VM) EvalError!void {
+        var ptr = try Self.ft.getTypedPointer(try vm.stack.pop());
+        const sym = try vm.stack.pop();
+        if (sym != .Symbol) return error.TypeError;
+        const value = try vm.stack.pop();
+        // TODO handle overwrite
+        try ptr.put(sym.Symbol, value);
+    }
+
+    pub fn _get(vm: *VM) EvalError!void {
+        var ptr = try Self.ft.getTypedPointer(try vm.stack.pop());
+        const sym = try vm.stack.pop();
+        if (sym != .Symbol) return error.TypeError;
+        // TODO handle not found
+        //        should probably return a result
+        try vm.stack.push(ptr.get(sym.Symbol).?);
+    }
 };
 
 // =====
 
 pub const builtins = [_]struct {
     name: []const u8,
-    func: ForeignFn,
+    func: FFI_Fn.Function,
 }{
     .{
         .name = "panic",
@@ -755,43 +809,39 @@ pub const builtins = [_]struct {
 
     .{
         .name = "<vec>",
-        .func = Vec._make,
-    },
-    .{
-        .name = "<vec>,free",
-        .func = Vec._free,
+        .func = ft_vec._make,
     },
     .{
         .name = "vpush!",
-        .func = Vec._push,
+        .func = ft_vec._push,
     },
     .{
         .name = "vget",
-        .func = Vec._get,
+        .func = ft_vec._get,
     },
     .{
         .name = "vlen",
-        .func = Vec._len,
+        .func = ft_vec._len,
     },
     .{
         .name = "vreverse!",
-        .func = Vec._reverse_in_place,
+        .func = ft_vec._reverse_in_place,
     },
 
-    .{
-        .name = "<map>",
-        .func = Proto._make,
-    },
-    .{
-        .name = "<map>,free",
-        .func = Proto._free,
-    },
-    .{
-        .name = "mget",
-        .func = Proto._get,
-    },
-    .{
-        .name = "mset!",
-        .func = Proto._set,
-    },
+    //     .{
+    //         .name = "<map>",
+    //         .func = ft_proto._make,
+    //     },
+    //     .{
+    //         .name = "<map>,free",
+    //         .func = ft_proto._free,
+    //     },
+    //     .{
+    //         .name = "mget",
+    //         .func = ft_proto._get,
+    //     },
+    //     .{
+    //         .name = "mset!",
+    //         .func = ft_proto._set,
+    //     },
 };

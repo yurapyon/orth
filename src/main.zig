@@ -23,15 +23,15 @@ pub fn something(allocator: *Allocator) !void {
     for (builtins.builtins) |bi| {
         const idx = try vm.internSymbol(bi.name);
         vm.word_table.items[idx] = lib.Value{
-            .ForeignFnPtr = .{
+            .FFI_Fn = .{
                 .name = idx,
                 .func = bi.func,
             },
         };
     }
 
-    _ = try vm.defineForeignType(builtins.Vec.ft);
-    _ = try vm.defineForeignType(builtins.Proto.ft);
+    _ = try vm.installFFI_Type(builtins.ft_vec.ft);
+    // _ = try vm.installFFI_Type(builtins.ft_proto.ft);
 
     var base_f = try readFile(allocator, "src/base.orth");
     defer allocator.free(base_f);
