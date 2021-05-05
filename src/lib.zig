@@ -11,7 +11,7 @@ const ascii = std.ascii;
 // tokenizer
 //   char type? could just use ints
 //     maybe do them like #\A #\b etc
-//     # is an escaper thing
+//     #\ is an escaper thing
 //   multiline strings
 //     do the thing where leading spaces are removed
 //     "hello
@@ -114,44 +114,6 @@ pub const EvalError = error{
 
 //;
 
-pub fn Cow(comptime T: type) type {
-    return struct {
-        const Self = @This();
-
-        const_data: []const T,
-        data: ArrayList(T),
-        owns_data: bool,
-
-        pub fn init(allocator: *Allocator, data: []const T) Self {
-            return .{
-                .const_data = data,
-                .data = ArrayList(T).init(allocator),
-                .owns_data = false,
-            };
-        }
-
-        pub fn deinit(self: *Self) void {
-            self.data.deinit();
-        }
-
-        pub fn get(self: Self) []const T {
-            if (self.owns_data) {
-                return self.data.items;
-            } else {
-                return self.const_data;
-            }
-        }
-
-        pub fn getMut(self: *Self) Allocator.Error![]T {
-            if (!self.owns_data) {
-                try self.data.appendSlice(self.const_data);
-                self.owns_data = true;
-            }
-            return self.data.items;
-        }
-    };
-}
-
 pub fn Stack(comptime T: type) type {
     return struct {
         const Self = @This();
@@ -213,6 +175,23 @@ pub const Token = struct {
     line_num: usize,
 };
 
+pub const Value_ = union(enum) {
+    Int: i64,
+    Float: f64,
+    // TODO unicode
+    Char: u8,
+    Boolean: bool,
+    Sentinel,
+    String: []const u8,
+    Word: usize,
+    Symbol: usize,
+    Quotation: []const Literal,
+    FFI_Fn: FFI_Fn,
+    FFI_Ptr: FFI_Ptr,
+    // QuoteOpen,
+    // QuoteClose,
+};
+
 pub const Literal = union(enum) {
     Int: i32,
     Float: f32,
@@ -230,52 +209,6 @@ pub const FFI_Fn = struct {
 
     name: usize,
     func: Function,
-};
-
-pub const FFI_Type = struct {
-    const Self = @This();
-
-    type_id: usize = undefined,
-    display_fn: fn (*VM, FFI_Ptr) void = defaultDisplay,
-    equals_fn: fn (*VM, FFI_Ptr, FFI_Ptr) bool = defaultEquals,
-    // TODO rename to dup_fn, probably return an FFI_Ptr not a value
-    clone_fn: fn (*VM, FFI_Ptr) Value = defaultClone,
-    drop_fn: fn (*VM, FFI_Ptr) bool = defaultDrop,
-
-    fn defaultDisplay(vm: *VM, ptr: FFI_Ptr) void {
-        std.debug.print("*<{} {}>", .{
-            ptr.type_id,
-            ptr.ptr,
-        });
-    }
-
-    fn defaultEquals(vm: *VM, ptr1: FFI_Ptr, ptr2: FFI_Ptr) bool {
-        return ptr1.type_id == ptr2.type_id and
-            ptr1.ptr == ptr2.ptr;
-    }
-
-    fn defaultClone(vm: *VM, ptr: FFI_Ptr) Value {
-        return .{ .FFI_Ptr = ptr };
-    }
-
-    fn defaultDrop(vm: *VM, ptr: FFI_Ptr) bool {
-        return true;
-    }
-
-    //;
-
-    pub fn makePtr(self: Self, ptr: anytype) FFI_Ptr {
-        return .{
-            .type_id = self.type_id,
-            .ptr = @ptrCast(*FFI_Ptr.Ptr, ptr),
-        };
-    }
-
-    pub fn checkType(self: Self, ptr: FFI_Ptr) EvalError!void {
-        if (ptr.type_id != self.type_id) {
-            return error.TypeError;
-        }
-    }
 };
 
 pub const FFI_Ptr = struct {
@@ -296,8 +229,6 @@ pub const Address = struct {
 };
 
 pub const Value = union(enum) {
-    const Self = @This();
-
     Int: i32,
     Float: f32,
     Boolean: bool,
@@ -311,6 +242,51 @@ pub const Value = union(enum) {
 };
 
 //;
+
+pub const FFI_Type = struct {
+    const Self = @This();
+
+    type_id: usize = undefined,
+    display_fn: fn (*VM, FFI_Ptr) void = defaultDisplay,
+    equals_fn: fn (*VM, FFI_Ptr, FFI_Ptr) bool = defaultEquals,
+    dup_fn: fn (*VM, FFI_Ptr) FFI_Ptr = defaultDup,
+    drop_fn: fn (*VM, FFI_Ptr) void = defaultDrop,
+
+    fn defaultDisplay(vm: *VM, ptr: FFI_Ptr) void {
+        std.debug.print("*<{} {}>", .{
+            ptr.type_id,
+            ptr.ptr,
+        });
+    }
+
+    fn defaultEquals(vm: *VM, ptr1: FFI_Ptr, ptr2: FFI_Ptr) bool {
+        return ptr1.type_id == ptr2.type_id and
+            ptr1.ptr == ptr2.ptr;
+    }
+
+    fn defaultDup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
+        return ptr;
+    }
+
+    fn defaultDrop(vm: *VM, ptr: FFI_Ptr) void {
+        return true;
+    }
+
+    //;
+
+    pub fn makePtr(self: Self, ptr: anytype) FFI_Ptr {
+        return .{
+            .type_id = self.type_id,
+            .ptr = @ptrCast(*FFI_Ptr.Ptr, ptr),
+        };
+    }
+
+    pub fn checkType(self: Self, ptr: FFI_Ptr) EvalError!void {
+        if (ptr.type_id != self.type_id) {
+            return error.TypeError;
+        }
+    }
+};
 
 pub const Local = struct {
     name: usize,
@@ -326,8 +302,8 @@ pub const VM = struct {
     symbol_table: ArrayList([]const u8),
     word_table: ArrayList(?Value),
     type_table: ArrayList(*const FFI_Type),
-    string_table: ArrayList(Cow(u8)),
-    quotation_table: ArrayList(Cow(Literal)),
+    string_table: ArrayList([]const u8),
+    quotation_table: ArrayList([]const Literal),
 
     current_execution: []const Literal,
 
@@ -344,8 +320,8 @@ pub const VM = struct {
             .symbol_table = ArrayList([]const u8).init(allocator),
             .word_table = ArrayList(?Value).init(allocator),
             .type_table = ArrayList(*const FFI_Type).init(allocator),
-            .string_table = ArrayList(Cow(u8)).init(allocator),
-            .quotation_table = ArrayList(Cow(Literal)).init(allocator),
+            .string_table = ArrayList([]const u8).init(allocator),
+            .quotation_table = ArrayList([]const Literal).init(allocator),
 
             .current_execution = undefined,
 
@@ -358,23 +334,19 @@ pub const VM = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        // TODO should u drop all the values in the stack?
+        for (self.stack.data.items) |val| {
+            self.dropValue(v);
+        }
         for (self.word_table.items) |val| {
             if (val) |v| {
-                _ = self.dropValue(v);
+                self.dropValue(v);
             }
         }
         self.locals.deinit();
         self.restore_stack.deinit();
         self.return_stack.deinit();
         self.stack.deinit();
-        for (self.quotation_table.items) |*cow| {
-            cow.deinit();
-        }
         self.quotation_table.deinit();
-        for (self.string_table.items) |*cow| {
-            cow.deinit();
-        }
         self.string_table.deinit();
         self.type_table.deinit();
         self.word_table.deinit();
@@ -598,15 +570,16 @@ pub const VM = struct {
             },
             .Sentinel => std.debug.print("#sentinel", .{}),
             .Symbol => |val| std.debug.print(":{}", .{self.symbol_table.items[val]}),
-            .String => |val| std.debug.print("\"{}\"", .{self.string_table.items[val].get()}),
+            .String => |val| std.debug.print("\"{}\"", .{self.string_table.items[val]}),
             .Quotation => |val| {
                 std.debug.print("q{{ ", .{});
-                for (self.quotation_table.items[val].get()) |lit| {
+                for (self.quotation_table.items[val]) |lit| {
                     self.nicePrintLiteral(lit);
                     std.debug.print(" ", .{});
                 }
                 std.debug.print("}}", .{});
             },
+            // TODO
             .Address => {},
             .FFI_Fn => |val| std.debug.print("fn({})", .{self.symbol_table.items[val.name]}),
             .FFI_Ptr => |ptr| self.type_table.items[ptr.type_id].display_fn(self, ptr),
@@ -624,19 +597,19 @@ pub const VM = struct {
         self.word_table.items[idx] = value;
     }
 
-    // TODO can clone have an allocation error?
-    pub fn cloneValue(self: *Self, val: Value) Value {
+    pub fn dupValue(self: *Self, val: Value) Value {
         switch (val) {
-            .FFI_Ptr => |ptr| return self.type_table.items[ptr.type_id].clone_fn(self, ptr),
+            .FFI_Ptr => |ptr| return .{
+                .FFI_Ptr = self.type_table.items[ptr.type_id].dup_fn(self, ptr),
+            },
             else => return val,
         }
     }
 
-    // returns wether the value you passed in is still valid
-    pub fn dropValue(self: *Self, val: Value) bool {
-        switch (val) {
-            .FFI_Ptr => |ptr| return self.type_table.items[ptr.type_id].drop_fn(self, ptr),
-            else => return true,
+    pub fn dropValue(self: *Self, val: Value) void {
+        if (val == .FFI_Ptr) {
+            const ptr = val.FFI_Ptr;
+            self.type_table.items[ptr.type_id].drop_fn(self, ptr);
         }
     }
 
@@ -644,10 +617,10 @@ pub const VM = struct {
         switch (val) {
             .Quotation => |id| {
                 try self.return_stack.push(.{ .Address = self.current_execution });
-                self.current_execution = self.quotation_table.items[id].get();
+                self.current_execution = self.quotation_table.items[id];
             },
             .FFI_Fn => |fp| try fp.func(self),
-            else => try self.stack.push(self.cloneValue(val)),
+            else => try self.stack.push(self.dupValue(val)),
         }
     }
 
@@ -683,10 +656,7 @@ pub const VM = struct {
                         if (quotation_level == 0) {
                             const slice = if (q_ct == 0) &[_]Literal{} else q_start[1..(q_ct + 1)];
                             const id = self.quotation_table.items.len;
-                            try self.quotation_table.append(Cow(Literal).init(
-                                self.allocator,
-                                slice,
-                            ));
+                            try self.quotation_table.append(slice);
                             try self.stack.push(.{ .Quotation = id });
                             self.current_execution.ptr += 1;
                             self.current_execution.len -= 1;
@@ -711,7 +681,7 @@ pub const VM = struct {
                     .Float => |f| try self.stack.push(.{ .Float = f }),
                     .String => |str| {
                         const id = self.string_table.items.len;
-                        try self.string_table.append(Cow(u8).init(self.allocator, str));
+                        try self.string_table.append(str);
                         try self.stack.push(.{ .String = id });
                     },
                     .Word => |idx| {

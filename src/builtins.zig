@@ -63,7 +63,7 @@ pub fn f_ref(vm: *VM) EvalError!void {
     if (name != .Symbol) return error.TypeError;
 
     if (vm.word_table.items[name.Symbol]) |val| {
-        try vm.stack.push(vm.cloneValue(val));
+        try vm.stack.push(vm.dupValue(val));
     } else {
         vm.error_info.word_not_found = vm.symbol_table.items[name.Symbol];
         return error.WordNotFound;
@@ -287,10 +287,10 @@ pub fn f_choose(vm: *VM) EvalError!void {
         .Boolean => |b| {
             if (b) {
                 try vm.stack.push(if_true);
-                _ = vm.dropValue(if_false);
+                vm.dropValue(if_false);
             } else {
                 try vm.stack.push(if_false);
-                _ = vm.dropValue(if_true);
+                vm.dropValue(if_true);
             }
         },
         else => return error.TypeError,
@@ -315,8 +315,8 @@ pub fn f_equal(vm: *VM) EvalError!void {
         // TODO
         .FFI_Ptr => false,
     } else false;
-    _ = vm.dropValue(a);
-    _ = vm.dropValue(b);
+    vm.dropValue(a);
+    vm.dropValue(b);
     try vm.stack.push(.{ .Boolean = are_equal });
 }
 
@@ -353,49 +353,49 @@ pub fn f_from_r(vm: *VM) EvalError!void {
 }
 
 pub fn f_peek_r(vm: *VM) EvalError!void {
-    try vm.stack.push(vm.cloneValue(try vm.return_stack.peek()));
+    try vm.stack.push(vm.dupValue(try vm.return_stack.peek()));
 }
 
 // shuffle ===
 
 pub fn f_drop(vm: *VM) EvalError!void {
     const val = try vm.stack.pop();
-    _ = vm.dropValue(val);
+    vm.dropValue(val);
 }
 
 pub fn f_dup(vm: *VM) EvalError!void {
     const val = try vm.stack.peek();
-    try vm.stack.push(vm.cloneValue(val));
+    try vm.stack.push(vm.dupValue(val));
 }
 
 pub fn f_2dup(vm: *VM) EvalError!void {
     const val = try vm.stack.peek();
-    try vm.stack.push(vm.cloneValue(val));
-    try vm.stack.push(vm.cloneValue(val));
+    try vm.stack.push(vm.dupValue(val));
+    try vm.stack.push(vm.dupValue(val));
 }
 
 pub fn f_3dup(vm: *VM) EvalError!void {
     const val = try vm.stack.peek();
-    try vm.stack.push(vm.cloneValue(val));
-    try vm.stack.push(vm.cloneValue(val));
-    try vm.stack.push(vm.cloneValue(val));
+    try vm.stack.push(vm.dupValue(val));
+    try vm.stack.push(vm.dupValue(val));
+    try vm.stack.push(vm.dupValue(val));
 }
 
 pub fn f_over(vm: *VM) EvalError!void {
     const val = (try vm.stack.index(1)).*;
-    try vm.stack.push(vm.cloneValue(val));
+    try vm.stack.push(vm.dupValue(val));
 }
 
 pub fn f_2over(vm: *VM) EvalError!void {
     const v1 = (try vm.stack.index(1)).*;
     const v2 = (try vm.stack.index(2)).*;
-    try vm.stack.push(vm.cloneValue(v2));
-    try vm.stack.push(vm.cloneValue(v1));
+    try vm.stack.push(vm.dupValue(v2));
+    try vm.stack.push(vm.dupValue(v1));
 }
 
 pub fn f_pick(vm: *VM) EvalError!void {
     const val = (try vm.stack.index(2)).*;
-    try vm.stack.push(vm.cloneValue(val));
+    try vm.stack.push(vm.dupValue(val));
 }
 
 pub fn f_swap(vm: *VM) EvalError!void {
@@ -431,6 +431,46 @@ pub fn f_dip(vm: *VM) EvalError!void {
     try vm.evaluateValue(quot);
     try vm.restore_stack.push(restore);
 }
+
+// Copy on Write ===
+
+// pub fn Cow(comptime T: type) type {
+//     return struct {
+//         const Self = @This();
+//
+//         const_data: []const T,
+//         data: ArrayList(T),
+//         owns_data: bool,
+//
+//         pub fn init(allocator: *Allocator, data: []const T) Self {
+//             return .{
+//                 .const_data = data,
+//                 .data = ArrayList(T).init(allocator),
+//                 .owns_data = false,
+//             };
+//         }
+//
+//         pub fn deinit(self: *Self) void {
+//             self.data.deinit();
+//         }
+//
+//         pub fn get(self: Self) []const T {
+//             if (self.owns_data) {
+//                 return self.data.items;
+//             } else {
+//                 return self.const_data;
+//             }
+//         }
+//
+//         pub fn getMut(self: *Self) Allocator.Error![]T {
+//             if (!self.owns_data) {
+//                 try self.data.appendSlice(self.const_data);
+//                 self.owns_data = true;
+//             }
+//             return self.data.items;
+//         }
+//     };
+// }
 
 // Rc ===
 
@@ -470,7 +510,7 @@ pub const ft_vec = struct {
 
     pub var ffi_type = FFI_Type{
         .display_fn = display,
-        .clone_fn = clone,
+        .dup_fn = dup,
         .drop_fn = drop,
     };
 
@@ -489,22 +529,20 @@ pub const ft_vec = struct {
         return false;
     }
 
-    pub fn clone(vm: *VM, ptr: FFI_Ptr) Value {
+    pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
         var rc = ptr.cast(Rc(ArrayList(Value)));
-        return .{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) };
+        return Self.ffi_type.makePtr(rc.ref());
     }
 
-    pub fn drop(vm: *VM, ptr: FFI_Ptr) bool {
+    pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
         var rc = ptr.cast(Rc(ArrayList(Value)));
-        const still_alive = rc.dec();
-        if (!still_alive) {
+        if (!rc.dec()) {
             for (rc.obj.items) |val| {
-                _ = vm.dropValue(val);
+                vm.dropValue(val);
             }
             rc.obj.deinit();
             vm.allocator.destroy(rc);
         }
-        return still_alive;
     }
 
     //;
@@ -527,7 +565,7 @@ pub const ft_vec = struct {
         var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
         try rc.obj.append(val);
 
-        _ = vm.dropValue(ptr);
+        vm.dropValue(ptr);
     }
 
     //     pub fn _get(vm: *VM) EvalError!void {
@@ -560,7 +598,7 @@ pub const ft_vec = struct {
         var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
         std.mem.reverse(Value, rc.obj.items);
 
-        _ = vm.dropValue(ptr);
+        vm.dropValue(ptr);
     }
 
     pub fn _reverse_in_place(vm: *VM) EvalError!void {
@@ -571,7 +609,7 @@ pub const ft_vec = struct {
         var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
         std.mem.reverse(Value, rc.obj.items);
 
-        _ = vm.dropValue(ptr);
+        vm.dropValue(ptr);
     }
 };
 
