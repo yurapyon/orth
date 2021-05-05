@@ -61,6 +61,12 @@ pub fn something(allocator: *Allocator) !void {
     };
     defer test_vals.deinit();
 
+    for (test_vals.items) |v| {
+        std.debug.print(". ", .{});
+        vm.nicePrintValue(v);
+        std.debug.print("\n", .{});
+    }
+
     vm.eval(test_vals.items) catch |err| {
         switch (err) {
             error.WordNotFound => {

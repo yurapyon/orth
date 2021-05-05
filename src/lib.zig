@@ -96,11 +96,12 @@ pub const ParseError = error{
     InvalidString,
     InvalidWord,
     InvalidSymbol,
+    QuotationUnderflow,
+    UnfinishedQuotation,
 } || Allocator.Error;
 
 pub const EvalError = error{
     WordNotFound,
-    QuotationUnderflow,
     TypeError,
     DivideByZero,
     NegativeDenominator,
@@ -157,19 +158,6 @@ pub fn Stack(comptime T: type) type {
         }
     };
 }
-
-//;
-
-pub const Token = struct {
-    pub const Type = enum {
-        String,
-        Word,
-    };
-
-    ty: Type,
-    str: []const u8,
-    line_num: usize,
-};
 
 //;
 
@@ -482,6 +470,27 @@ pub const VM = struct {
             else => {},
         }
 
+        var q_stack = Stack(usize).init(self.allocator);
+        defer q_stack.deinit();
+
+        for (ret.items) |value, i| {
+            switch (value) {
+                .QuoteOpen => {
+                    try q_stack.push(i);
+                },
+                .QuoteClose => {
+                    if (q_stack.data.items.len == 0) {
+                        return error.QuotationUnderflow;
+                    }
+                    const q_start = q_stack.pop() catch unreachable;
+                    ret.items[q_start] = .{ .Quotation = ret.items[(q_start + 1)..i] };
+                },
+                else => {},
+            }
+        }
+
+        if (q_stack.data.items.len > 0) return error.UnfinishedQuotation;
+
         return ret;
     }
 
@@ -502,6 +511,7 @@ pub const VM = struct {
             .String => |val| std.debug.print("\"{}\"", .{val}),
             .Quotation => |q| {
                 std.debug.print("q{{ ", .{});
+                // TODO fix this loop to acct for quotations
                 for (q) |val| {
                     self.nicePrintValue(val);
                     std.debug.print(" ", .{});
@@ -566,40 +576,6 @@ pub const VM = struct {
             while (self.current_execution.len != 0) {
                 var value = self.current_execution[0];
 
-                switch (value) {
-                    .QuoteOpen => {
-                        quotation_level += 1;
-                        if (quotation_level == 1) {
-                            q_start = @ptrCast([*]const Value, self.current_execution.ptr);
-                            q_ct = 0;
-                            self.current_execution.ptr += 1;
-                            self.current_execution.len -= 1;
-                            continue;
-                        }
-                    },
-                    .QuoteClose => {
-                        if (quotation_level == 0) {
-                            return error.QuotationUnderflow;
-                        }
-                        quotation_level -= 1;
-                        if (quotation_level == 0) {
-                            const slice = if (q_ct == 0) &[_]Value{} else q_start[1..(q_ct + 1)];
-                            try self.stack.push(.{ .Quotation = slice });
-                            self.current_execution.ptr += 1;
-                            self.current_execution.len -= 1;
-                            continue;
-                        }
-                    },
-                    else => {},
-                }
-
-                if (quotation_level > 0) {
-                    q_ct += 1;
-                    self.current_execution.ptr += 1;
-                    self.current_execution.len -= 1;
-                    continue;
-                }
-
                 self.current_execution.ptr += 1;
                 self.current_execution.len -= 1;
 
@@ -623,6 +599,11 @@ pub const VM = struct {
                             self.error_info.word_not_found = self.symbol_table.items[idx];
                             return error.WordNotFound;
                         }
+                    },
+                    .Quotation => |q| {
+                        try self.stack.push(value);
+                        self.current_execution.ptr += q.len + 1;
+                        self.current_execution.len -= q.len + 1;
                     },
                     .QuoteOpen, .QuoteClose => return error.InternalError,
                     else => |val| try self.stack.push(val),
