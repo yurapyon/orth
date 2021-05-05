@@ -30,8 +30,8 @@ pub fn something(allocator: *Allocator) !void {
         };
     }
 
-    _ = try vm.installFFI_Type(builtins.ft_vec.ft);
-    _ = try vm.installFFI_Type(builtins.ft_proto.ft);
+    _ = try vm.installFFI_Type(&builtins.ft_vec.ffi_type);
+    // _ = try vm.installFFI_Type(builtins.ft_proto.ft);
 
     var base_f = try readFile(allocator, "src/base.orth");
     defer allocator.free(base_f);
@@ -52,11 +52,11 @@ pub fn something(allocator: *Allocator) !void {
     const tokens = vm.tokenize(f) catch |err| {
         switch (err) {
             error.InvalidWord => {
-                std.log.info("invalid word: {}", .{vm.error_info.line_number});
+                std.log.warn("invalid word: {}", .{vm.error_info.line_number});
                 return;
             },
             error.InvalidString => {
-                std.log.info("invalid string: {}", .{vm.error_info.line_number});
+                std.log.warn("invalid string: {}", .{vm.error_info.line_number});
                 return;
             },
             else => return err,
@@ -70,12 +70,12 @@ pub fn something(allocator: *Allocator) !void {
     vm.eval(literals.items) catch |err| {
         switch (err) {
             error.WordNotFound => {
-                std.log.info("word not found: {}", .{vm.error_info.word_not_found});
+                std.log.warn("word not found: {}", .{vm.error_info.word_not_found});
                 return;
             },
             else => {
-                std.log.info("err: {}", .{err});
-                return;
+                std.log.warn("err: {}", .{err});
+                return err;
             },
         }
     };

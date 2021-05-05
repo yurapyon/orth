@@ -31,6 +31,12 @@ usingnamespace lib;
 //   bitwise operators
 //   string manipulation
 
+// Vec
+//   vecs might be able to use the optimization
+//   that if you are mapping over them
+//     if you know that the original vec doesnt have any refs to it anymore
+//   u can reuse it for the new vector
+
 //;
 
 pub fn f_panic(vm: *VM) EvalError!void {
@@ -57,7 +63,7 @@ pub fn f_ref(vm: *VM) EvalError!void {
     if (name != .Symbol) return error.TypeError;
 
     if (vm.word_table.items[name.Symbol]) |val| {
-        try vm.stack.push(val.clone());
+        try vm.stack.push(vm.cloneValue(val));
     } else {
         vm.error_info.word_not_found = vm.symbol_table.items[name.Symbol];
         return error.WordNotFound;
@@ -281,10 +287,10 @@ pub fn f_choose(vm: *VM) EvalError!void {
         .Boolean => |b| {
             if (b) {
                 try vm.stack.push(if_true);
-                if (if_false == .Ref) _ = if_false.Ref.rc.dec(vm);
+                _ = vm.dropValue(if_false);
             } else {
                 try vm.stack.push(if_false);
-                if (if_true == .Ref) _ = if_true.Ref.rc.dec(vm);
+                _ = vm.dropValue(if_true);
             }
         },
         else => return error.TypeError,
@@ -294,8 +300,6 @@ pub fn f_choose(vm: *VM) EvalError!void {
 pub fn f_equal(vm: *VM) EvalError!void {
     const a = try vm.stack.pop();
     const b = try vm.stack.pop();
-    if (a == .Ref) _ = a.Ref.rc.dec(vm);
-    if (b == .Ref) _ = b.Ref.rc.dec(vm);
     const are_equal = if (@as(@TagType(Value), a) == b) switch (a) {
         .Int => |val| val == b.Int,
         .Float => |val| val == b.Float,
@@ -305,11 +309,14 @@ pub fn f_equal(vm: *VM) EvalError!void {
         // TODO
         .String => false,
         .Quotation => false,
+        .Address => false,
         .FFI_Fn => |ptr| ptr.name == b.FFI_Fn.name and
             ptr.func == b.FFI_Fn.func,
         // TODO
-        .Ref => false,
+        .FFI_Ptr => false,
     } else false;
+    _ = vm.dropValue(a);
+    _ = vm.dropValue(b);
     try vm.stack.push(.{ .Boolean = are_equal });
 }
 
@@ -346,49 +353,49 @@ pub fn f_from_r(vm: *VM) EvalError!void {
 }
 
 pub fn f_peek_r(vm: *VM) EvalError!void {
-    try vm.stack.push((try vm.return_stack.peek()).clone());
+    try vm.stack.push(vm.cloneValue(try vm.return_stack.peek()));
 }
 
 // shuffle ===
 
 pub fn f_drop(vm: *VM) EvalError!void {
     const val = try vm.stack.pop();
-    if (val == .Ref) _ = val.Ref.rc.dec(vm);
+    _ = vm.dropValue(val);
 }
 
 pub fn f_dup(vm: *VM) EvalError!void {
     const val = try vm.stack.peek();
-    try vm.stack.push(val.clone());
+    try vm.stack.push(vm.cloneValue(val));
 }
 
 pub fn f_2dup(vm: *VM) EvalError!void {
     const val = try vm.stack.peek();
-    try vm.stack.push(val.clone());
-    try vm.stack.push(val.clone());
+    try vm.stack.push(vm.cloneValue(val));
+    try vm.stack.push(vm.cloneValue(val));
 }
 
 pub fn f_3dup(vm: *VM) EvalError!void {
     const val = try vm.stack.peek();
-    try vm.stack.push(val.clone());
-    try vm.stack.push(val.clone());
-    try vm.stack.push(val.clone());
+    try vm.stack.push(vm.cloneValue(val));
+    try vm.stack.push(vm.cloneValue(val));
+    try vm.stack.push(vm.cloneValue(val));
 }
 
 pub fn f_over(vm: *VM) EvalError!void {
-    const val = try vm.stack.index(1);
-    try vm.stack.push(val.clone());
+    const val = (try vm.stack.index(1)).*;
+    try vm.stack.push(vm.cloneValue(val));
 }
 
 pub fn f_2over(vm: *VM) EvalError!void {
-    const v1 = try vm.stack.index(1);
-    const v2 = try vm.stack.index(2);
-    try vm.stack.push(v2.clone());
-    try vm.stack.push(v1.clone());
+    const v1 = (try vm.stack.index(1)).*;
+    const v2 = (try vm.stack.index(2)).*;
+    try vm.stack.push(vm.cloneValue(v2));
+    try vm.stack.push(vm.cloneValue(v1));
 }
 
 pub fn f_pick(vm: *VM) EvalError!void {
-    const val = try vm.stack.index(2);
-    try vm.stack.push(val.clone());
+    const val = (try vm.stack.index(2)).*;
+    try vm.stack.push(vm.cloneValue(val));
 }
 
 pub fn f_swap(vm: *VM) EvalError!void {
@@ -421,8 +428,39 @@ pub fn f_dip(vm: *VM) EvalError!void {
     const quot = try vm.stack.pop();
     const restore = try vm.stack.pop();
     if (quot != .Quotation) return error.TypeError;
-    try vm.eval(vm.quotation_table.items[quot.Quotation].get());
-    try vm.stack.push(restore);
+    try vm.evaluateValue(quot);
+    try vm.restore_stack.push(restore);
+}
+
+// Rc ===
+
+pub fn Rc(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        obj: T,
+        ref_ct: usize,
+
+        pub fn init() Self {
+            return .{
+                .obj = undefined,
+                .ref_ct = 0,
+            };
+        }
+
+        // TODO probably rename this to inc
+        pub fn ref(self: *Self) *Self {
+            self.ref_ct += 1;
+            return self;
+        }
+
+        // returns if the obj is alive or not
+        pub fn dec(self: *Self) bool {
+            std.debug.assert(self.ref_ct > 0);
+            self.ref_ct -= 1;
+            return self.ref_ct != 0;
+        }
+    };
 }
 
 // vec ===
@@ -430,89 +468,110 @@ pub fn f_dip(vm: *VM) EvalError!void {
 pub const ft_vec = struct {
     const Self = @This();
 
-    pub const ft = FFI_TypeDefinition(ArrayList(Value), display, equals, finalize);
+    pub var ffi_type = FFI_Type{
+        .display_fn = display,
+        .clone_fn = clone,
+        .drop_fn = drop,
+    };
 
-    pub fn display(vm: *VM, rc: *FFI_Rc) void {
-        const arr = rc.cast(ArrayList(Value));
+    pub fn display(vm: *VM, ptr: FFI_Ptr) void {
+        const rc = ptr.cast(Rc(ArrayList(Value)));
         std.debug.print("v[ ", .{});
-        for (arr.items) |v| {
+        for (rc.obj.items) |v| {
             vm.nicePrintValue(v);
             std.debug.print(" ", .{});
         }
         std.debug.print("]", .{});
     }
 
-    pub fn equals(vm: *VM, rc1: *FFI_Rc, rc2: *FFI_Rc) bool {
-        // TODO
+    // TODO
+    pub fn equals(vm: *VM, ptr1: FFI_Ptr, ptr2: FFI_Ptr) bool {
         return false;
     }
 
-    pub fn finalize(vm: *VM, rc: *FFI_Rc) void {
-        var arr = rc.cast(ArrayList(Value));
-        for (arr.items) |val| {
-            if (val == .Ref) {
-                _ = val.Ref.rc.dec(vm);
+    pub fn clone(vm: *VM, ptr: FFI_Ptr) Value {
+        var rc = ptr.cast(Rc(ArrayList(Value)));
+        return .{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) };
+    }
+
+    pub fn drop(vm: *VM, ptr: FFI_Ptr) bool {
+        var rc = ptr.cast(Rc(ArrayList(Value)));
+        const still_alive = rc.dec();
+        if (!still_alive) {
+            for (rc.obj.items) |val| {
+                _ = vm.dropValue(val);
             }
+            rc.obj.deinit();
+            vm.allocator.destroy(rc);
         }
-        arr.deinit();
-        vm.allocator.destroy(arr);
+        return still_alive;
     }
 
     //;
 
     pub fn _make(vm: *VM) EvalError!void {
-        var arr = try vm.allocator.create(ArrayList(Value));
-        errdefer vm.allocator.destroy(arr);
-        arr.* = ArrayList(Value).init(vm.allocator);
-
-        var rc = try vm.allocator.create(FFI_Rc);
-        rc.* = Self.ft.makeRc(arr);
+        var rc = try vm.allocator.create(Rc(ArrayList(Value)));
         errdefer vm.allocator.destroy(rc);
+        rc.* = Rc(ArrayList(Value)).init();
+        rc.obj = ArrayList(Value).init(vm.allocator);
 
-        try vm.stack.push(.{ .Ref = rc.ref() });
+        try vm.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
     }
 
     pub fn _push(vm: *VM) EvalError!void {
-        const ref = try vm.stack.pop();
+        const ptr = try vm.stack.pop();
         const val = try vm.stack.pop();
-        try Self.ft.checkType(ref);
+        if (ptr != .FFI_Ptr) return error.TypeError;
+        try Self.ffi_type.checkType(ptr.FFI_Ptr);
 
-        if (!ref.Ref.rc.dec(vm)) return;
+        var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
+        try rc.obj.append(val);
 
-        var arr = ref.Ref.rc.cast(ArrayList(Value));
-        try arr.append(val);
+        _ = vm.dropValue(ptr);
     }
 
-    pub fn _get(vm: *VM) EvalError!void {
-        const ref = try vm.stack.pop();
-        const idx = try vm.stack.pop();
-        try Self.ft.checkType(ref);
-        if (idx != .Int) return error.TypeError;
+    //     pub fn _get(vm: *VM) EvalError!void {
+    //         const ref = try vm.stack.pop();
+    //         const idx = try vm.stack.pop();
+    //         try Self.ft.checkType(ref);
+    //         if (idx != .Int) return error.TypeError;
+    //
+    //         if (!ref.Ref.rc.dec(vm)) return;
+    //
+    //         var arr = ref.Ref.rc.cast(ArrayList(Value));
+    //         try vm.stack.push(arr.items[@intCast(usize, idx.Int)]);
+    //     }
+    //
+    //     pub fn _len(vm: *VM) EvalError!void {
+    //         const ref = try vm.stack.pop();
+    //         try Self.ft.checkType(ref);
+    //
+    //         if (!ref.Ref.rc.dec(vm)) return;
+    //
+    //         var arr = ref.Ref.rc.cast(ArrayList(Value));
+    //         try vm.stack.push(.{ .Int = @intCast(i32, arr.items.len) });
+    //     }
 
-        if (!ref.Ref.rc.dec(vm)) return;
+    pub fn _map_in_place(vm: *VM) EvalError!void {
+        const ptr = try vm.stack.pop();
+        if (ptr != .FFI_Ptr) return error.TypeError;
+        try Self.ffi_type.checkType(ptr.FFI_Ptr);
 
-        var arr = ref.Ref.rc.cast(ArrayList(Value));
-        try vm.stack.push(arr.items[@intCast(usize, idx.Int)]);
-    }
+        var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
+        std.mem.reverse(Value, rc.obj.items);
 
-    pub fn _len(vm: *VM) EvalError!void {
-        const ref = try vm.stack.pop();
-        try Self.ft.checkType(ref);
-
-        if (!ref.Ref.rc.dec(vm)) return;
-
-        var arr = ref.Ref.rc.cast(ArrayList(Value));
-        try vm.stack.push(.{ .Int = @intCast(i32, arr.items.len) });
+        _ = vm.dropValue(ptr);
     }
 
     pub fn _reverse_in_place(vm: *VM) EvalError!void {
-        const ref = try vm.stack.pop();
-        try Self.ft.checkType(ref);
+        const ptr = try vm.stack.pop();
+        if (ptr != .FFI_Ptr) return error.TypeError;
+        try Self.ffi_type.checkType(ptr.FFI_Ptr);
 
-        if (!ref.Ref.rc.dec(vm)) return;
+        var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
+        std.mem.reverse(Value, rc.obj.items);
 
-        var arr = ref.Ref.rc.cast(ArrayList(Value));
-        std.mem.reverse(Value, arr.items);
+        _ = vm.dropValue(ptr);
     }
 };
 
@@ -789,29 +848,32 @@ pub const builtins = [_]struct {
         .name = "vpush!",
         .func = ft_vec._push,
     },
+    //     .{
+    //         .name = "vget",
+    //         .func = ft_vec._get,
+    //     },
+    //     .{
+    //         .name = "vlen",
+    //         .func = ft_vec._len,
+    //     },
     .{
-        .name = "vget",
-        .func = ft_vec._get,
-    },
-    .{
-        .name = "vlen",
-        .func = ft_vec._len,
+        .name = "vmap!",
+        .func = ft_vec._map_in_place,
     },
     .{
         .name = "vreverse!",
         .func = ft_vec._reverse_in_place,
     },
-
-    .{
-        .name = "<map>",
-        .func = ft_proto._make,
-    },
-    .{
-        .name = "mget*",
-        .func = ft_proto._get,
-    },
-    .{
-        .name = "mset!",
-        .func = ft_proto._set,
-    },
+    //     .{
+    //         .name = "<map>",
+    //         .func = ft_proto._make,
+    //     },
+    //     .{
+    //         .name = "mget*",
+    //         .func = ft_proto._get,
+    //     },
+    //     .{
+    //         .name = "mset!",
+    //         .func = ft_proto._set,
+    //     },
 };

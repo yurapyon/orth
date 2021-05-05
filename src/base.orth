@@ -122,6 +122,9 @@ swap mod +
 
 ; =====
 
+{ vlen 0 swap
+} :vbounds @
+
 { mget* drop
 } :mget @
 
@@ -129,13 +132,15 @@ swap mod +
 
 #sentinel :[ @
 
-{ dup #sentinel eq? { drop <R } { .R vpush! ]vec' } if
+{
+over #sentinel eq? { nip } { { vpush! } keep ]vec' } if
 } :]vec' @
 
 { ; ( #sentinel ... a b c -- vec )
-<vec> >R ]vec' { vreverse! } keep
+<vec> ]vec' { vreverse! } keep
 } :]vec @
 
+; TODO rewerite without return stack
 { dup #sentinel eq? { drop <R } { swap .R mset! ]map' } if
 } :]map' @
 

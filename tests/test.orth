@@ -1,84 +1,11 @@
-{ . drop } :print @
-
-;
-
-{ ; ( vec -- min max )
-vlen 0 swap
-} :vbounds @
-
 {
-[ :r 1 :g 1 :b 1 :a 1 ]map
-} :<color>,white @
-
-{
-[ :r 0 :g 0 :b 0 :a 0 ]map
-} :<color>,black @
-
-{ ; ( c1 c2 -- c3 )
-:b @local
-:a @local
-[ :r a b { :r swap mget } bi^ +
-  :g a b { :g swap mget } bi^ +
-  :b a b { :b swap mget } bi^ +
-  :a a b { :a swap mget } bi^ +
-]map
-} :color+ @
-
-;
-
-
-;
-
-{ ; ( vec -- anim )
-[ swap :frames swap
-       :at 0 ]map
-} :<anim> @
-
-{ ]vec <anim> } :]anim @
-
-{ :frames swap mget } :anim-frames @
-{ :at swap mget } :anim-at @
-{ :at swap mset! } :anim-at! @
-
-{
-{ anim-at } { anim-frames } bi vget
-} :anim-peek @
-
-{ ; ( adv anim -- )
-swap
-{ dup { anim-frames vbounds } { anim-at } bi } dip
-+ wrap
-swap anim-at!
-} :anim-advance! @
-
-{ { 1 swap anim-advance! } keep anim-peek } :anim-next! @
-{ { -1 swap anim-advance! } keep anim-peek } :anim-prev! @
-
-;
-
-[ " (oa" " (ob" "*(oc" ]anim
-; [ " (oa" " (ob" "*(oc" ]vec [ swap :frames swap ]map
-; [ " (oa" " (ob" "*(oc" ]vec :blah <map> { mset! } keep
-; [ [ 1 2 ]vec 3 4 ]vec
-
-dup
-:at swap mget* { drop "hello" } when
-.stack
-
-; drop
-
-; <anim>
-; :a @
-
-; "start" print
-; { anim-next! print } keep
-; { anim-next! print } keep
-; { anim-next! print } keep
-; { anim-next! print } keep
-; { anim-next! print } keep
-; "2" print
-; { anim-prev! print } keep
-; { anim-prev! print } keep
-; { anim-prev! print } keep
-; { anim-prev! print } keep
-; { anim-prev! print } keep
+>R
+1 .R vpush!
+2 .R vpush!
+3 .R vpush!
+<R
+}
+:do_it
+@
+<vec> do_it .stack
+drop

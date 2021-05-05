@@ -23,15 +23,11 @@ const ascii = std.ascii;
 //   currently literals returned from parser need to stay around while vm is evaluating
 //     would be nice if this wasnt the case ?
 //     this goes along with copying strings and symbols and keeping them in the vm
+//   dropValue and drop functions shouldnt return a bool
+//     should be assumed that memory is invalidated
 //   rc
-//     locals have to account for rc
-//     now that i have Rcs is there a way that i could pass unmanaged ptrs
-//       and have the same functions work on those
-//     reference counting for strings quotations
-//         being on the stack or in word_table counts as a reference
-//         could do manual memory management but i imagine that would get hard
-//       string and quotation could be a *Cow(_) but, that complicates memory management
-//         would be better if they were Rc(Cow(_))
+// errors
+//   put in 'catch unreachable' on stack pops/indexes that cant fail
 
 // TODO want
 // error reporting
@@ -45,6 +41,7 @@ const ascii = std.ascii;
 //   can also be used for composoition
 //   could do it by letting foreign types mark themselves as callable
 // namespaces / envs would be nice but have to think abt how they should work
+// tail call optimization
 // return stack
 //   rename to alt_stack or something
 // maybe make 'and' and 'or' work like lua
@@ -69,12 +66,13 @@ const ascii = std.ascii;
 // locals
 //   locals memory management
 //   different way of knowing where to restore locals to
-//     so ForeignFns can do stuff with locals
+//     so FFI_Fns can do stuff with locals
 //   should you look back out of your current 'scope'?
 //     no probably not
 // quotations
 //   test that modifying a quotation works
 //   { and } are words
+//     can u make quotations work like [ ]vec
 //   could be foreign types if { can turn off evaluation of literals
 //     } handles backtracking like ]vec does and turns it back on
 //   need a way to put literals on the stack
@@ -186,17 +184,14 @@ pub fn Stack(comptime T: type) type {
         }
 
         pub fn peek(self: *Self) StackError!T {
-            return self.index(0);
+            return (try self.index(0)).*;
         }
 
-        // TODO
-        // original idea for index was to reaturn a pointer
-        //   so it could be used for stuff like swap and rot
-        pub fn index(self: *Self, idx: usize) StackError!T {
+        pub fn index(self: *Self, idx: usize) StackError!*T {
             if (idx >= self.data.items.len) {
                 return error.OutOfBounds;
             }
-            return self.data.items[self.data.items.len - idx - 1];
+            return &self.data.items[self.data.items.len - idx - 1];
         }
 
         pub fn clear(self: *Self) void {
@@ -221,7 +216,6 @@ pub const Token = struct {
 pub const Literal = union(enum) {
     Int: i32,
     Float: f32,
-    Boolean: bool,
     String: []const u8,
     Word: usize,
     Symbol: usize,
@@ -238,142 +232,69 @@ pub const FFI_Fn = struct {
     func: Function,
 };
 
-pub fn FFI_TypeDefinition(
-    comptime T: type,
-    comptime display_fn_: ?fn (*VM, *FFI_Rc) void,
-    comptime equals_fn_: ?fn (*VM, *FFI_Rc, *FFI_Rc) bool,
-    comptime finalizer_fn_: ?fn (*VM, *FFI_Rc) void,
-) type {
-    return struct {
-        const display_fn = display_fn_ orelse defaultDisplay;
-        const equals_fn = equals_fn_ orelse defaultEquals;
-        const finalizer_fn = finalizer_fn_ orelse defaultFinalizer;
-
-        var type_id: usize = undefined;
-
-        fn defaultDisplay(vm: *VM, rc: *const FFI_Rc) void {
-            std.debug.print("*<{} {} {}>", .{
-                rc.type_id,
-                rc.data,
-                rc.ref_ct,
-            });
-        }
-
-        fn defaultEquals(vm: *VM, rc1: *const FFI_Rc, rc2: *const FFI_Rc) bool {
-            return rc1 == rc2;
-        }
-
-        fn defaultFinalizer(vm: *VM, rc: *FFI_Rc) void {}
-
-        //;
-
-        fn getAsFFI_Type() FFI_Type {
-            return .{
-                .display_fn = display_fn,
-                .equals_fn = equals_fn,
-                .finalizer_fn = finalizer_fn,
-            };
-        }
-
-        pub fn makeRc(obj: *T) FFI_Rc {
-            return FFI_Rc.init(type_id, obj);
-        }
-
-        pub fn checkType(val: Value) EvalError!void {
-            if (val != .Ref or val.Ref.rc.type_id != type_id) {
-                return error.TypeError;
-            }
-        }
-
-        //         pub fn getField(
-        //             vm: *VM,
-        //             comptime ty: []const u8,
-        //             comptime field: []const u8,
-        //         ) EvalError!void {
-        //             const val = try vm.stack.pop();
-        //             const ptr = try assertValueIsType(val);
-        //             try vm.stack.push(@unionInit(Value, ty, @field(ptr, field)));
-        //         }
-        //
-        //         pub fn setField(
-        //             vm: *VM,
-        //             comptime ty: []const u8,
-        //             comptime field: []const u8,
-        //             set_to: Value,
-        //         ) EvalError!void {
-        //             const val = try vm.stack.peek();
-        //             const ptr = try assertValueIsType(val);
-        //             @field(ptr, field) = @field(set_to, ty);
-        //         }
-    };
-}
-
 pub const FFI_Type = struct {
-    // TODO maybe have these as optionals
-    //   have the vm worry about wether to use default fn or not
-    //   then you can turn speciallized display fns on or off
-    display_fn: fn (*VM, *FFI_Rc) void,
-    equals_fn: fn (*VM, *FFI_Rc, *FFI_Rc) bool,
-    finalizer_fn: fn (*VM, *FFI_Rc) void,
-};
-
-pub const FFI_Rc = struct {
     const Self = @This();
 
-    pub const Ref = struct {
-        rc: *Self,
-    };
+    type_id: usize = undefined,
+    display_fn: fn (*VM, FFI_Ptr) void = defaultDisplay,
+    equals_fn: fn (*VM, FFI_Ptr, FFI_Ptr) bool = defaultEquals,
+    // TODO rename to dup_fn, probably return an FFI_Ptr not a value
+    clone_fn: fn (*VM, FFI_Ptr) Value = defaultClone,
+    drop_fn: fn (*VM, FFI_Ptr) bool = defaultDrop,
+
+    fn defaultDisplay(vm: *VM, ptr: FFI_Ptr) void {
+        std.debug.print("*<{} {}>", .{
+            ptr.type_id,
+            ptr.ptr,
+        });
+    }
+
+    fn defaultEquals(vm: *VM, ptr1: FFI_Ptr, ptr2: FFI_Ptr) bool {
+        return ptr1.type_id == ptr2.type_id and
+            ptr1.ptr == ptr2.ptr;
+    }
+
+    fn defaultClone(vm: *VM, ptr: FFI_Ptr) Value {
+        return .{ .FFI_Ptr = ptr };
+    }
+
+    fn defaultDrop(vm: *VM, ptr: FFI_Ptr) bool {
+        return true;
+    }
+
+    //;
+
+    pub fn makePtr(self: Self, ptr: anytype) FFI_Ptr {
+        return .{
+            .type_id = self.type_id,
+            .ptr = @ptrCast(*FFI_Ptr.Ptr, ptr),
+        };
+    }
+
+    pub fn checkType(self: Self, ptr: FFI_Ptr) EvalError!void {
+        if (ptr.type_id != self.type_id) {
+            return error.TypeError;
+        }
+    }
+};
+
+pub const FFI_Ptr = struct {
+    const Self = @This();
 
     pub const Ptr = opaque {};
 
     type_id: usize,
-    data: *Ptr,
-    ref_ct: usize,
-
-    fn init(type_id: usize, obj: anytype) Self {
-        return .{
-            .type_id = type_id,
-            .data = @ptrCast(*Ptr, obj),
-            .ref_ct = 0,
-        };
-    }
+    ptr: *Ptr,
 
     pub fn cast(self: Self, comptime T: type) *T {
-        return @ptrCast(*T, @alignCast(@alignOf(T), self.data));
-    }
-
-    pub fn ref(self: *Self) Ref {
-        self.ref_ct += 1;
-        return .{ .rc = self };
-    }
-
-    // returns if the obj is alive or not
-    pub fn dec(self: *Self, vm: *VM) bool {
-        std.debug.assert(self.ref_ct > 0);
-        self.ref_ct -= 1;
-        const should_free = self.ref_ct == 0;
-        if (should_free) {
-            vm.type_table.items[self.type_id].finalizer_fn(vm, self);
-            vm.allocator.destroy(self);
-        }
-
-        return !should_free;
+        return @ptrCast(*T, @alignCast(@alignOf(T), self.ptr));
     }
 };
 
-// // TODO maybe just rename to Pointer
-// pub const ForeignPtr = struct {
-//     const Self = @This();
-//     pub const Ptr = opaque {};
-//
-//     type_id: usize,
-//     ptr: Rc(Ptr).Ref,
-//
-//     pub fn cast(self: Self, comptime T: type) *T {
-//         return @ptrCast(*T, @alignCast(@alignOf(T), self.ptr));
-//     }
-// };
-//
+pub const Address = struct {
+    cont: []const Literal,
+};
+
 pub const Value = union(enum) {
     const Self = @This();
 
@@ -384,16 +305,9 @@ pub const Value = union(enum) {
     String: usize,
     Symbol: usize,
     Quotation: usize,
+    Address: []const Literal,
     FFI_Fn: FFI_Fn,
-    Ref: FFI_Rc.Ref,
-
-    pub fn clone(self: Self) Self {
-        if (self == .Ref) {
-            return .{ .Ref = self.Ref.rc.ref() };
-        } else {
-            return self;
-        }
-    }
+    FFI_Ptr: FFI_Ptr,
 };
 
 //;
@@ -408,42 +322,50 @@ pub const VM = struct {
 
     allocator: *Allocator,
     error_info: ErrorInfo,
+
     symbol_table: ArrayList([]const u8),
     word_table: ArrayList(?Value),
-    type_table: ArrayList(FFI_Type),
+    type_table: ArrayList(*const FFI_Type),
     string_table: ArrayList(Cow(u8)),
     quotation_table: ArrayList(Cow(Literal)),
+
+    current_execution: []const Literal,
+
     stack: Stack(Value),
     return_stack: Stack(Value),
+    restore_stack: Stack(Value),
     locals: Stack(Local),
 
     pub fn init(allocator: *Allocator) Self {
         var ret = .{
             .allocator = allocator,
             .error_info = undefined,
+
             .symbol_table = ArrayList([]const u8).init(allocator),
             .word_table = ArrayList(?Value).init(allocator),
-            .type_table = ArrayList(FFI_Type).init(allocator),
+            .type_table = ArrayList(*const FFI_Type).init(allocator),
             .string_table = ArrayList(Cow(u8)).init(allocator),
             .quotation_table = ArrayList(Cow(Literal)).init(allocator),
+
+            .current_execution = undefined,
+
             .stack = Stack(Value).init(allocator),
             .return_stack = Stack(Value).init(allocator),
+            .restore_stack = Stack(Value).init(allocator),
             .locals = Stack(Local).init(allocator),
         };
         return ret;
     }
 
     pub fn deinit(self: *Self) void {
-        for (self.word_table.items) |*val| {
-            if (val.*) |*v| {
-                if (v.* == .Ref) {
-                    self.type_table.items[v.Ref.rc.type_id].finalizer_fn(self, v.Ref.rc);
-                    self.allocator.destroy(v.Ref.rc);
-                }
+        // TODO should u drop all the values in the stack?
+        for (self.word_table.items) |val| {
+            if (val) |v| {
+                _ = self.dropValue(v);
             }
         }
-
         self.locals.deinit();
+        self.restore_stack.deinit();
         self.return_stack.deinit();
         self.stack.deinit();
         for (self.quotation_table.items) |*cow| {
@@ -476,8 +398,8 @@ pub const VM = struct {
             };
         }
 
-        _ = try vm.defineForeignType(builtins.Vec.ft);
-        _ = try vm.defineForeignType(builtins.Proto.ft);
+        // _ = try vm.defineForeignType(builtins.Vec.ft);
+        // _ = try vm.defineForeignType(builtins.Proto.ft);
 
         var base_f = try readFile(allocator, "src/base.orth");
         defer allocator.free(base_f);
@@ -601,10 +523,6 @@ pub const VM = struct {
         switch (lit) {
             .Int => |val| std.debug.print("{}", .{val}),
             .Float => |val| std.debug.print("{d}f", .{val}),
-            .Boolean => |val| {
-                const str = if (val) "#t" else "#f";
-                std.debug.print("{s}", .{str});
-            },
             .String => |val| std.debug.print("\"{}\"", .{val}),
             .Word => |val| std.debug.print("{}", .{self.symbol_table.items[val]}),
             .Symbol => |val| std.debug.print(":{}", .{self.symbol_table.items[val]}),
@@ -689,15 +607,16 @@ pub const VM = struct {
                 }
                 std.debug.print("}}", .{});
             },
+            .Address => {},
             .FFI_Fn => |val| std.debug.print("fn({})", .{self.symbol_table.items[val.name]}),
-            .Ref => |ref| self.type_table.items[ref.rc.type_id].display_fn(self, ref.rc),
+            .FFI_Ptr => |ptr| self.type_table.items[ptr.type_id].display_fn(self, ptr),
         }
     }
 
-    pub fn installFFI_Type(self: *Self, comptime T: type) Allocator.Error!void {
+    pub fn installFFI_Type(self: *Self, ty: *FFI_Type) Allocator.Error!void {
         const idx = self.type_table.items.len;
-        T.type_id = idx;
-        try self.type_table.append(T.getAsFFI_Type());
+        ty.type_id = idx;
+        try self.type_table.append(ty);
     }
 
     pub fn defineWord(self: *Self, name: []const u8, value: Value) Allocator.Error!void {
@@ -705,98 +624,131 @@ pub const VM = struct {
         self.word_table.items[idx] = value;
     }
 
+    // TODO can clone have an allocation error?
+    pub fn cloneValue(self: *Self, val: Value) Value {
+        switch (val) {
+            .FFI_Ptr => |ptr| return self.type_table.items[ptr.type_id].clone_fn(self, ptr),
+            else => return val,
+        }
+    }
+
+    // returns wether the value you passed in is still valid
+    pub fn dropValue(self: *Self, val: Value) bool {
+        switch (val) {
+            .FFI_Ptr => |ptr| return self.type_table.items[ptr.type_id].drop_fn(self, ptr),
+            else => return true,
+        }
+    }
+
     pub fn evaluateValue(self: *Self, val: Value) EvalError!void {
         switch (val) {
-            .Quotation => |id| try self.eval(self.quotation_table.items[id].get()),
+            .Quotation => |id| {
+                try self.return_stack.push(.{ .Address = self.current_execution });
+                self.current_execution = self.quotation_table.items[id].get();
+            },
             .FFI_Fn => |fp| try fp.func(self),
-            else => try self.stack.push(val.clone()),
+            else => try self.stack.push(self.cloneValue(val)),
         }
     }
 
     // TODO wordLookup needs to be out here to account for locals
 
     pub fn eval(self: *Self, literals: []const Literal) EvalError!void {
-        // TODO QOL
-        // could do quoations differently
-        //   { inc quotation_level
-        //   } back tracks to find most recent {
-        //     creates []Literal using that info
-        //       rather than using q_start and q_ct
-        //   need to use a while loop insteda of for loop i think
         var quotation_level: usize = 0;
         var q_start: [*]const Literal = undefined;
         var q_ct: usize = 0;
-        const restore_locals_len = self.locals.data.items.len;
 
-        for (literals) |*lit| {
-            switch (lit.*) {
-                .QuoteOpen => {
-                    quotation_level += 1;
-                    if (quotation_level == 1) {
-                        q_start = @ptrCast([*]const Literal, lit);
-                        q_ct = 0;
-                        continue;
-                    }
-                },
-                .QuoteClose => {
-                    if (quotation_level == 0) {
-                        return error.QuotationUnderflow;
-                    }
-                    quotation_level -= 1;
-                    if (quotation_level == 0) {
-                        const slice = if (q_ct == 0) &[_]Literal{} else q_start[1..(q_ct + 1)];
-                        const id = self.quotation_table.items.len;
-                        try self.quotation_table.append(Cow(Literal).init(
-                            self.allocator,
-                            slice,
-                        ));
-                        try self.stack.push(.{ .Quotation = id });
-                        continue;
-                    }
-                },
-                else => {},
-            }
+        self.current_execution = literals;
 
-            if (quotation_level > 0) {
-                q_ct += 1;
-                continue;
-            }
+        while (true) {
+            while (self.current_execution.len != 0) {
+                var lit = self.current_execution[0];
 
-            switch (lit.*) {
-                .Int => |i| try self.stack.push(.{ .Int = i }),
-                .Float => |f| try self.stack.push(.{ .Float = f }),
-                .Boolean => |b| try self.stack.push(.{ .Boolean = b }),
-                .String => |str| {
-                    const id = self.string_table.items.len;
-                    try self.string_table.append(Cow(u8).init(self.allocator, str));
-                    try self.stack.push(.{ .String = id });
-                },
-                .Word => |idx| {
-                    const current_locals_len = self.locals.data.items.len;
-                    if (current_locals_len > restore_locals_len) {
-                        var found_local = false;
-                        for (self.locals.data.items[restore_locals_len..current_locals_len]) |local| {
-                            if (idx == local.name) {
-                                try self.evaluateValue(local.value);
-                                found_local = true;
-                            }
+                switch (lit) {
+                    .QuoteOpen => {
+                        quotation_level += 1;
+                        if (quotation_level == 1) {
+                            q_start = @ptrCast([*]const Literal, self.current_execution.ptr);
+                            q_ct = 0;
+                            self.current_execution.ptr += 1;
+                            self.current_execution.len -= 1;
+                            continue;
                         }
-                        if (found_local) continue;
-                    }
+                    },
+                    .QuoteClose => {
+                        if (quotation_level == 0) {
+                            return error.QuotationUnderflow;
+                        }
+                        quotation_level -= 1;
+                        if (quotation_level == 0) {
+                            const slice = if (q_ct == 0) &[_]Literal{} else q_start[1..(q_ct + 1)];
+                            const id = self.quotation_table.items.len;
+                            try self.quotation_table.append(Cow(Literal).init(
+                                self.allocator,
+                                slice,
+                            ));
+                            try self.stack.push(.{ .Quotation = id });
+                            self.current_execution.ptr += 1;
+                            self.current_execution.len -= 1;
+                            continue;
+                        }
+                    },
+                    else => {},
+                }
 
-                    const val = self.word_table.items[idx];
-                    if (val) |v| {
-                        try self.evaluateValue(v);
-                    } else {
-                        self.error_info.word_not_found = self.symbol_table.items[idx];
-                        return error.WordNotFound;
-                    }
-                },
-                .Symbol => |idx| try self.stack.push(.{ .Symbol = idx }),
-                .QuoteOpen, .QuoteClose => return error.InternalError,
+                if (quotation_level > 0) {
+                    q_ct += 1;
+                    self.current_execution.ptr += 1;
+                    self.current_execution.len -= 1;
+                    continue;
+                }
+
+                self.current_execution.ptr += 1;
+                self.current_execution.len -= 1;
+
+                switch (lit) {
+                    .Int => |i| try self.stack.push(.{ .Int = i }),
+                    .Float => |f| try self.stack.push(.{ .Float = f }),
+                    .String => |str| {
+                        const id = self.string_table.items.len;
+                        try self.string_table.append(Cow(u8).init(self.allocator, str));
+                        try self.stack.push(.{ .String = id });
+                    },
+                    .Word => |idx| {
+                        //                     const current_locals_len = self.locals.data.items.len;
+                        //                     if (current_locals_len > restore_locals_len) {
+                        //                         var found_local = false;
+                        //                         for (self.locals.data.items[restore_locals_len..current_locals_len]) |local| {
+                        //                             if (idx == local.name) {
+                        //                                 try self.evaluateValue(local.value);
+                        //                                 found_local = true;
+                        //                             }
+                        //                         }
+                        //                         if (found_local) continue;
+                        //                     }
+                        const found_word = self.word_table.items[idx];
+                        if (found_word) |v| {
+                            try self.evaluateValue(v);
+                        } else {
+                            self.error_info.word_not_found = self.symbol_table.items[idx];
+                            return error.WordNotFound;
+                        }
+                    },
+                    .Symbol => |idx| try self.stack.push(.{ .Symbol = idx }),
+                    .QuoteOpen, .QuoteClose => return error.InternalError,
+                }
+            }
+
+            while (self.restore_stack.data.items.len > 0) {
+                try self.stack.push(self.restore_stack.pop() catch unreachable);
+            }
+
+            if (self.return_stack.data.items.len > 0) {
+                // TODO this is where invalid return stack errors happen
+                self.current_execution = (self.return_stack.pop() catch unreachable).Address;
+            } else {
+                break;
             }
         }
-
-        self.locals.data.items.len = restore_locals_len;
     }
 };
