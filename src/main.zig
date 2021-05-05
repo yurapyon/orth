@@ -36,20 +36,17 @@ pub fn something(allocator: *Allocator) !void {
     var base_f = try readFile(allocator, "src/base.orth");
     defer allocator.free(base_f);
 
-    const base_toks = try vm.tokenize(base_f);
-    defer base_toks.deinit();
+    const base_vals = try vm.parse(base_f);
+    defer base_vals.deinit();
 
-    const base_lits = try vm.parse(base_toks.items);
-    defer base_lits.deinit();
-
-    try vm.eval(base_lits.items);
+    try vm.eval(base_vals.items);
 
     //;
 
     var f = try readFile(allocator, "tests/test.orth");
     defer allocator.free(f);
 
-    const tokens = vm.tokenize(f) catch |err| {
+    const test_vals = vm.parse(f) catch |err| {
         switch (err) {
             error.InvalidWord => {
                 std.log.warn("invalid word: {}", .{vm.error_info.line_number});
@@ -62,12 +59,9 @@ pub fn something(allocator: *Allocator) !void {
             else => return err,
         }
     };
-    defer tokens.deinit();
+    defer test_vals.deinit();
 
-    const literals = try vm.parse(tokens.items);
-    defer literals.deinit();
-
-    vm.eval(literals.items) catch |err| {
+    vm.eval(test_vals.items) catch |err| {
         switch (err) {
             error.WordNotFound => {
                 std.log.warn("word not found: {}", .{vm.error_info.word_not_found});

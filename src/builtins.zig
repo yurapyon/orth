@@ -309,11 +309,12 @@ pub fn f_equal(vm: *VM) EvalError!void {
         // TODO
         .String => false,
         .Quotation => false,
-        .Address => false,
         .FFI_Fn => |ptr| ptr.name == b.FFI_Fn.name and
             ptr.func == b.FFI_Fn.func,
         // TODO
         .FFI_Ptr => false,
+        // TODO
+        else => false,
     } else false;
     vm.dropValue(a);
     vm.dropValue(b);

@@ -20,33 +20,29 @@ const ascii = std.ascii;
 //   multiline comments?
 //     could use ( )
 // memory management
-//   currently literals returned from parser need to stay around while vm is evaluating
+//   currently values returned from parser need to stay around while vm is evaluating
 //     would be nice if this wasnt the case ?
 //     this goes along with copying strings and symbols and keeping them in the vm
-//   dropValue and drop functions shouldnt return a bool
-//     should be assumed that memory is invalidated
-//   rc
-// errors
+// zig errors
 //   put in 'catch unreachable' on stack pops/indexes that cant fail
-
-// TODO want
 // error reporting
 //   stack trace thing
-//   tokenize with column number/word number
-//     use line_num in parser code
-// handle recursion better
-//   right now it seems theres a limit b/c zig stack depth
-// currying changes how quoations work
-//   { values, quotation }
-//   can also be used for composoition
+//   parse with column number/word number some how
+//     use line_num in eval code
+// probably get rid of locals
+//   or locals could use return stack
+// quotations
+//   rc'd list of values
+//     currying makes more sense
 //   could do it by letting foreign types mark themselves as callable
+
+// TODO want
 // namespaces / envs would be nice but have to think abt how they should work
 // tail call optimization
-// return stack
-//   rename to alt_stack or something
 // maybe make 'and' and 'or' work like lua
 //   are values besides #t and #f able to work in places where booleans are accepted
 //   usually this is because everything is nullable, but i dont really want that in orth
+// make restore stack just one value?
 
 // TODO QOL
 // better int parser
@@ -63,6 +59,8 @@ const ascii = std.ascii;
 // records
 //   need to be significantly different than foreign ptrs
 //   foreign ptrs are pretty easy to use so idk
+
+// TODO probably not
 // locals
 //   locals memory management
 //   different way of knowing where to restore locals to
@@ -70,7 +68,6 @@ const ascii = std.ascii;
 //   should you look back out of your current 'scope'?
 //     no probably not
 // quotations
-//   test that modifying a quotation works
 //   { and } are words
 //     can u make quotations work like [ ]vec
 //   could be foreign types if { can turn off evaluation of literals
@@ -95,12 +92,11 @@ pub const StackError = error{
     OutOfBounds,
 } || Allocator.Error;
 
-pub const TokenizeError = error{
+pub const ParseError = error{
     InvalidString,
     InvalidWord,
+    InvalidSymbol,
 } || Allocator.Error;
-
-pub const ParseError = error{InvalidSymbol} || Allocator.Error;
 
 pub const EvalError = error{
     WordNotFound,
@@ -175,33 +171,6 @@ pub const Token = struct {
     line_num: usize,
 };
 
-pub const Value_ = union(enum) {
-    Int: i64,
-    Float: f64,
-    // TODO unicode
-    Char: u8,
-    Boolean: bool,
-    Sentinel,
-    String: []const u8,
-    Word: usize,
-    Symbol: usize,
-    Quotation: []const Literal,
-    FFI_Fn: FFI_Fn,
-    FFI_Ptr: FFI_Ptr,
-    // QuoteOpen,
-    // QuoteClose,
-};
-
-pub const Literal = union(enum) {
-    Int: i32,
-    Float: f32,
-    String: []const u8,
-    Word: usize,
-    Symbol: usize,
-    QuoteOpen,
-    QuoteClose,
-};
-
 //;
 
 pub const FFI_Fn = struct {
@@ -224,21 +193,21 @@ pub const FFI_Ptr = struct {
     }
 };
 
-pub const Address = struct {
-    cont: []const Literal,
-};
-
 pub const Value = union(enum) {
-    Int: i32,
-    Float: f32,
+    Int: i64,
+    Float: f64,
+    Char: u8,
+    // TODO unicode
     Boolean: bool,
     Sentinel,
-    String: usize,
+    String: []const u8,
+    Word: usize,
     Symbol: usize,
-    Quotation: usize,
-    Address: []const Literal,
+    Quotation: []const Value,
     FFI_Fn: FFI_Fn,
     FFI_Ptr: FFI_Ptr,
+    QuoteOpen,
+    QuoteClose,
 };
 
 //;
@@ -302,10 +271,8 @@ pub const VM = struct {
     symbol_table: ArrayList([]const u8),
     word_table: ArrayList(?Value),
     type_table: ArrayList(*const FFI_Type),
-    string_table: ArrayList([]const u8),
-    quotation_table: ArrayList([]const Literal),
 
-    current_execution: []const Literal,
+    current_execution: []const Value,
 
     stack: Stack(Value),
     return_stack: Stack(Value),
@@ -320,8 +287,6 @@ pub const VM = struct {
             .symbol_table = ArrayList([]const u8).init(allocator),
             .word_table = ArrayList(?Value).init(allocator),
             .type_table = ArrayList(*const FFI_Type).init(allocator),
-            .string_table = ArrayList([]const u8).init(allocator),
-            .quotation_table = ArrayList([]const Literal).init(allocator),
 
             .current_execution = undefined,
 
@@ -335,7 +300,7 @@ pub const VM = struct {
 
     pub fn deinit(self: *Self) void {
         for (self.stack.data.items) |val| {
-            self.dropValue(v);
+            self.dropValue(val);
         }
         for (self.word_table.items) |val| {
             if (val) |v| {
@@ -346,8 +311,6 @@ pub const VM = struct {
         self.restore_stack.deinit();
         self.return_stack.deinit();
         self.stack.deinit();
-        self.quotation_table.deinit();
-        self.string_table.deinit();
         self.type_table.deinit();
         self.word_table.deinit();
         self.symbol_table.deinit();
@@ -385,17 +348,60 @@ pub const VM = struct {
         try vm.eval(base_lits.items);
     }
 
-    // tokenize ===
+    // parse ===
 
-    fn charIsDelimiter(ch: u8) bool {
+    pub fn charIsDelimiter(ch: u8) bool {
         return ascii.isSpace(ch) or ch == ';';
     }
 
-    fn charIsWordValid(ch: u8) bool {
+    pub fn charIsWordValid(ch: u8) bool {
         return ch != '"';
     }
 
-    pub fn tokenize(self: *Self, input: []const u8) TokenizeError!ArrayList(Token) {
+    pub fn internSymbol(self: *Self, str: []const u8) Allocator.Error!usize {
+        for (self.symbol_table.items) |st_str, i| {
+            if (std.mem.eql(u8, str, st_str)) {
+                return i;
+            }
+        }
+
+        // TODO need
+        // copy strings on interning
+        //   makes sense for if u can generate symbols at runtime
+        const idx = self.symbol_table.items.len;
+        try self.symbol_table.append(str);
+        try self.word_table.append(null);
+        return idx;
+    }
+
+    pub fn parseWord(self: *Self, word: []const u8) ParseError!Value {
+        var try_parse_float =
+            !std.mem.eql(u8, word, "+") and
+            !std.mem.eql(u8, word, "-") and
+            !std.mem.eql(u8, word, ".");
+        const fl = std.fmt.parseFloat(f32, word) catch null;
+
+        if (word[0] == ':') {
+            if (word.len == 1) {
+                self.error_info.line_number = 0;
+                return error.InvalidSymbol;
+            } else {
+                return Value{ .Symbol = try self.internSymbol(word[1..]) };
+            }
+        } else if (std.fmt.parseInt(i32, word, 10) catch null) |i| {
+            return Value{ .Int = i };
+        } else if (try_parse_float and (fl != null)) {
+            return Value{ .Float = fl.? };
+        } else if (std.mem.eql(u8, word, "{")) {
+            return Value{ .QuoteOpen = {} };
+        } else if (std.mem.eql(u8, word, "}")) {
+            return Value{ .QuoteClose = {} };
+        } else {
+            return Value{ .Word = try self.internSymbol(word) };
+        }
+    }
+
+    pub fn parse(self: *Self, input: []const u8) ParseError!ArrayList(Value) {
         const State = enum {
             Empty,
             InComment,
@@ -407,7 +413,7 @@ pub const VM = struct {
         var start: usize = 0;
         var end: usize = 0;
 
-        var ret = ArrayList(Token).init(self.allocator);
+        var ret = ArrayList(Value).init(self.allocator);
         errdefer ret.deinit();
 
         var line_num: usize = 1;
@@ -439,11 +445,7 @@ pub const VM = struct {
                 },
                 .InString => {
                     if (ch == '"') {
-                        try ret.append(.{
-                            .ty = .String,
-                            .str = input[(start + 1)..(end + 1)],
-                            .line_num = line_num,
-                        });
+                        try ret.append(.{ .String = input[(start + 1)..(end + 1)] });
                         state = .Empty;
                         continue;
                     } else if (ch == '\n') {
@@ -454,11 +456,8 @@ pub const VM = struct {
                 },
                 .InWord => {
                     if (charIsDelimiter(ch)) {
-                        try ret.append(.{
-                            .ty = .Word,
-                            .str = input[start..(end + 1)],
-                            .line_num = line_num,
-                        });
+                        const word = input[start..(end + 1)];
+                        try ret.append(try self.parseWord(word));
                         state = .Empty;
                         continue;
                     } else if (!charIsWordValid(ch)) {
@@ -477,82 +476,10 @@ pub const VM = struct {
                 return error.InvalidString;
             },
             .InWord => {
-                try ret.append(.{
-                    .ty = .Word,
-                    .str = input[start..(end + 1)],
-                    .line_num = line_num,
-                });
+                const word = input[start..(end + 1)];
+                try ret.append(try self.parseWord(word));
             },
             else => {},
-        }
-
-        return ret;
-    }
-
-    // parse ===
-
-    pub fn nicePrintLiteral(self: *Self, lit: Literal) void {
-        switch (lit) {
-            .Int => |val| std.debug.print("{}", .{val}),
-            .Float => |val| std.debug.print("{d}f", .{val}),
-            .String => |val| std.debug.print("\"{}\"", .{val}),
-            .Word => |val| std.debug.print("{}", .{self.symbol_table.items[val]}),
-            .Symbol => |val| std.debug.print(":{}", .{self.symbol_table.items[val]}),
-            .QuoteOpen => std.debug.print("{{", .{}),
-            .QuoteClose => std.debug.print("}}", .{}),
-        }
-    }
-
-    pub fn internSymbol(self: *Self, str: []const u8) Allocator.Error!usize {
-        for (self.symbol_table.items) |st_str, i| {
-            if (std.mem.eql(u8, str, st_str)) {
-                return i;
-            }
-        }
-
-        // TODO need
-        // copy strings on interning
-        //   makes sense for if u can generate symbols at runtime
-        const idx = self.symbol_table.items.len;
-        try self.symbol_table.append(str);
-        try self.word_table.append(null);
-        return idx;
-    }
-
-    pub fn parse(self: *Self, tokens: []const Token) ParseError!ArrayList(Literal) {
-        var ret = ArrayList(Literal).init(self.allocator);
-        errdefer ret.deinit();
-
-        for (tokens) |token| {
-            switch (token.ty) {
-                .String => try ret.append(.{ .String = token.str }),
-                .Word => {
-                    var try_parse_float =
-                        !std.mem.eql(u8, token.str, "+") and
-                        !std.mem.eql(u8, token.str, "-") and
-                        !std.mem.eql(u8, token.str, ".");
-                    const fl = std.fmt.parseFloat(f32, token.str) catch null;
-
-                    if (token.str[0] == ':') {
-                        if (token.str.len == 1) {
-                            self.error_info.line_number = 0;
-                            return error.InvalidSymbol;
-                        } else {
-                            try ret.append(.{ .Symbol = try self.internSymbol(token.str[1..]) });
-                        }
-                    } else if (std.fmt.parseInt(i32, token.str, 10) catch null) |i| {
-                        try ret.append(.{ .Int = i });
-                    } else if (try_parse_float and (fl != null)) {
-                        try ret.append(.{ .Float = fl.? });
-                    } else if (std.mem.eql(u8, token.str, "{")) {
-                        try ret.append(.{ .QuoteOpen = {} });
-                    } else if (std.mem.eql(u8, token.str, "}")) {
-                        try ret.append(.{ .QuoteClose = {} });
-                    } else {
-                        try ret.append(.{ .Word = try self.internSymbol(token.str) });
-                    }
-                },
-            }
         }
 
         return ret;
@@ -564,25 +491,27 @@ pub const VM = struct {
         switch (value) {
             .Int => |val| std.debug.print("{}", .{val}),
             .Float => |val| std.debug.print("{d}f", .{val}),
+            .Char => |val| std.debug.print("{c}", .{val}),
             .Boolean => |val| {
                 const str = if (val) "#t" else "#f";
                 std.debug.print("{s}", .{str});
             },
             .Sentinel => std.debug.print("#sentinel", .{}),
             .Symbol => |val| std.debug.print(":{}", .{self.symbol_table.items[val]}),
-            .String => |val| std.debug.print("\"{}\"", .{self.string_table.items[val]}),
-            .Quotation => |val| {
+            .Word => |val| std.debug.print("\\{}", .{self.symbol_table.items[val]}),
+            .String => |val| std.debug.print("\"{}\"", .{val}),
+            .Quotation => |q| {
                 std.debug.print("q{{ ", .{});
-                for (self.quotation_table.items[val]) |lit| {
-                    self.nicePrintLiteral(lit);
+                for (q) |val| {
+                    self.nicePrintValue(val);
                     std.debug.print(" ", .{});
                 }
                 std.debug.print("}}", .{});
             },
-            // TODO
-            .Address => {},
             .FFI_Fn => |val| std.debug.print("fn({})", .{self.symbol_table.items[val.name]}),
             .FFI_Ptr => |ptr| self.type_table.items[ptr.type_id].display_fn(self, ptr),
+            .QuoteOpen => std.debug.print("{{", .{}),
+            .QuoteClose => std.debug.print("}}", .{}),
         }
     }
 
@@ -615,9 +544,9 @@ pub const VM = struct {
 
     pub fn evaluateValue(self: *Self, val: Value) EvalError!void {
         switch (val) {
-            .Quotation => |id| {
-                try self.return_stack.push(.{ .Address = self.current_execution });
-                self.current_execution = self.quotation_table.items[id];
+            .Quotation => |q| {
+                try self.return_stack.push(.{ .Quotation = self.current_execution });
+                self.current_execution = q;
             },
             .FFI_Fn => |fp| try fp.func(self),
             else => try self.stack.push(self.dupValue(val)),
@@ -626,22 +555,22 @@ pub const VM = struct {
 
     // TODO wordLookup needs to be out here to account for locals
 
-    pub fn eval(self: *Self, literals: []const Literal) EvalError!void {
+    pub fn eval(self: *Self, values: []const Value) EvalError!void {
         var quotation_level: usize = 0;
-        var q_start: [*]const Literal = undefined;
+        var q_start: [*]const Value = undefined;
         var q_ct: usize = 0;
 
-        self.current_execution = literals;
+        self.current_execution = values;
 
         while (true) {
             while (self.current_execution.len != 0) {
-                var lit = self.current_execution[0];
+                var value = self.current_execution[0];
 
-                switch (lit) {
+                switch (value) {
                     .QuoteOpen => {
                         quotation_level += 1;
                         if (quotation_level == 1) {
-                            q_start = @ptrCast([*]const Literal, self.current_execution.ptr);
+                            q_start = @ptrCast([*]const Value, self.current_execution.ptr);
                             q_ct = 0;
                             self.current_execution.ptr += 1;
                             self.current_execution.len -= 1;
@@ -654,10 +583,8 @@ pub const VM = struct {
                         }
                         quotation_level -= 1;
                         if (quotation_level == 0) {
-                            const slice = if (q_ct == 0) &[_]Literal{} else q_start[1..(q_ct + 1)];
-                            const id = self.quotation_table.items.len;
-                            try self.quotation_table.append(slice);
-                            try self.stack.push(.{ .Quotation = id });
+                            const slice = if (q_ct == 0) &[_]Value{} else q_start[1..(q_ct + 1)];
+                            try self.stack.push(.{ .Quotation = slice });
                             self.current_execution.ptr += 1;
                             self.current_execution.len -= 1;
                             continue;
@@ -676,26 +603,19 @@ pub const VM = struct {
                 self.current_execution.ptr += 1;
                 self.current_execution.len -= 1;
 
-                switch (lit) {
-                    .Int => |i| try self.stack.push(.{ .Int = i }),
-                    .Float => |f| try self.stack.push(.{ .Float = f }),
-                    .String => |str| {
-                        const id = self.string_table.items.len;
-                        try self.string_table.append(str);
-                        try self.stack.push(.{ .String = id });
-                    },
+                switch (value) {
                     .Word => |idx| {
-                        //                     const current_locals_len = self.locals.data.items.len;
-                        //                     if (current_locals_len > restore_locals_len) {
-                        //                         var found_local = false;
-                        //                         for (self.locals.data.items[restore_locals_len..current_locals_len]) |local| {
-                        //                             if (idx == local.name) {
-                        //                                 try self.evaluateValue(local.value);
-                        //                                 found_local = true;
-                        //                             }
-                        //                         }
-                        //                         if (found_local) continue;
-                        //                     }
+                        // const current_locals_len = self.locals.data.items.len;
+                        // if (current_locals_len > restore_locals_len) {
+                        //     var found_local = false;
+                        //     for (self.locals.data.items[restore_locals_len..current_locals_len]) |local| {
+                        //         if (idx == local.name) {
+                        //             try self.evaluateValue(local.value);
+                        //             found_local = true;
+                        //         }
+                        //     }
+                        //     if (found_local) continue;
+                        // }
                         const found_word = self.word_table.items[idx];
                         if (found_word) |v| {
                             try self.evaluateValue(v);
@@ -704,8 +624,8 @@ pub const VM = struct {
                             return error.WordNotFound;
                         }
                     },
-                    .Symbol => |idx| try self.stack.push(.{ .Symbol = idx }),
                     .QuoteOpen, .QuoteClose => return error.InternalError,
+                    else => |val| try self.stack.push(val),
                 }
             }
 
@@ -715,7 +635,7 @@ pub const VM = struct {
 
             if (self.return_stack.data.items.len > 0) {
                 // TODO this is where invalid return stack errors happen
-                self.current_execution = (self.return_stack.pop() catch unreachable).Address;
+                self.current_execution = (self.return_stack.pop() catch unreachable).Quotation;
             } else {
                 break;
             }
