@@ -95,8 +95,12 @@
 
 ; =====
 
-{ { > } 2keep ?  } :max @
-{ { < } 2keep ?  } :min @
+{ swap < } :> @
+{ > not } :<= @
+{ < not } :>= @
+
+{ { > } 2keep ? } :max @
+{ { < } 2keep ? } :min @
 { min max } :clamp @
 
 { dup 0 < { neg } when

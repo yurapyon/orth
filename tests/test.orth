@@ -1,1 +1,23 @@
-[ 1 2 3 ]vec .stack
+; TODO need
+;   ffi quotations
+;   making a getter is essentially currying
+;     need to make { 0 swap vget }vget
+; { cell
+; } define-struct
+
+0 1 <=
+0 0 <=
+0 -1 <=
+.stack
+
+; { [ 0 #f ]vec } "<cell>" string>symbol @
+; { 0 swap vget } :cell-char @
+; { 1 swap vget } :cell-lock @
+; { 0 swap vset! } :cell-char! @
+; { 1 swap vset! } :cell-lock! @
+; 
+; <cell> { :a swap cell-char! } keep
+; .stack
+; { cell-char } { cell-lock } bi
+; .stack 2drop
+

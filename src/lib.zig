@@ -7,42 +7,46 @@ const ascii = std.ascii;
 
 // stack 0 is top
 
+// records are vectors
+//   u wont get the same level of type checking
+//   but if you can generate symbols and quotations at runtime
+//     records can easily be made
+
+// display is human readable
+// write is machine readable
+
 // TODO need
-// tokenizer
-//   char type? could just use ints
-//     maybe do them like #\A #\b etc
+// parser
+//   char type
+//     do them like #\A #\b etc
 //     #\ is an escaper thing
-//   multiline strings
-//     do the thing where leading spaces are removed
-//     "hello
-//      world" should just be "hello\nworld"
-//   string escaping
+//     how to do unicode?
+//   strings
+//     multiline strings
+//       do the thing where leading spaces are removed
+//       "hello
+//        world" should just be "hello\nworld"
+//     string escaping
 //   multiline comments?
+//     would be nice
 //     could use ( )
 // memory management
 //   currently values returned from parser need to stay around while vm is evaluating
 //     would be nice if this wasnt the case ?
-//     this goes along with copying strings and symbols and keeping them in the vm
 // zig errors
 //   put in 'catch unreachable' on stack pops/indexes that cant fail
 // error reporting
 //   stack trace thing
-//   parse with column number/word number some how
+//   parse with column number/word number somehow
 //     use line_num in eval code
-// probably get rid of locals
-//   or locals could use return stack
-// quotations
-//   rc'd list of values
-//     currying makes more sense
-//   could do it by letting foreign types mark themselves as callable
+// ffi quotations
 
 // TODO want
 // namespaces / envs would be nice but have to think abt how they should work
 // tail call optimization
-// maybe make 'and' and 'or' work like lua
+// maybe make 'and' and 'or' work like lua ?
 //   are values besides #t and #f able to work in places where booleans are accepted
 //   usually this is because everything is nullable, but i dont really want that in orth
-// make restore stack just one value?
 
 // TODO QOL
 // better int parser
@@ -55,29 +59,7 @@ const ascii = std.ascii;
 //     so u can control where vm messages get printed
 //     integrate this into nicePrint functions
 //   if nice print is supposed to return strings then idk
-//   nicePrint fns take a Writer
-// records
-//   need to be significantly different than foreign ptrs
-//   foreign ptrs are pretty easy to use so idk
-
-// TODO probably not
-// locals
-//   locals memory management
-//   different way of knowing where to restore locals to
-//     so FFI_Fns can do stuff with locals
-//   should you look back out of your current 'scope'?
-//     no probably not
-// quotations
-//   { and } are words
-//     can u make quotations work like [ ]vec
-//   could be foreign types if { can turn off evaluation of literals
-//     } handles backtracking like ]vec does and turns it back on
-//   need a way to put literals on the stack
-//     certain types of values cant be turned back into literals and certain things can
-//   escaping words like  \ word  makes more sense
-//     if \ just turns off evaluation for 1 word
-//   ( turns off tokenizing until )
-//   ; turns off tokenizing until newline
+//   nicePrint fns take a zig Writer
 
 // errors ===
 
@@ -204,6 +186,8 @@ pub const FFI_Type = struct {
     const Self = @This();
 
     type_id: usize = undefined,
+
+    call_fn: ?fn (*VM, FFI_Ptr) void = null,
     display_fn: fn (*VM, FFI_Ptr) void = defaultDisplay,
     equals_fn: fn (*VM, FFI_Ptr, FFI_Ptr) bool = defaultEquals,
     dup_fn: fn (*VM, FFI_Ptr) FFI_Ptr = defaultDup,
@@ -245,9 +229,9 @@ pub const FFI_Type = struct {
     }
 };
 
-pub const Local = struct {
-    name: usize,
+pub const ReturnValue = struct {
     value: Value,
+    restore_ct: usize,
 };
 
 pub const VM = struct {
@@ -263,9 +247,8 @@ pub const VM = struct {
     current_execution: []const Value,
 
     stack: Stack(Value),
-    return_stack: Stack(Value),
+    return_stack: Stack(ReturnValue),
     restore_stack: Stack(Value),
-    locals: Stack(Local),
 
     pub fn init(allocator: *Allocator) Self {
         var ret = .{
@@ -279,9 +262,8 @@ pub const VM = struct {
             .current_execution = undefined,
 
             .stack = Stack(Value).init(allocator),
-            .return_stack = Stack(Value).init(allocator),
+            .return_stack = Stack(ReturnValue).init(allocator),
             .restore_stack = Stack(Value).init(allocator),
-            .locals = Stack(Local).init(allocator),
         };
         return ret;
     }
@@ -295,12 +277,14 @@ pub const VM = struct {
                 self.dropValue(v);
             }
         }
-        self.locals.deinit();
         self.restore_stack.deinit();
         self.return_stack.deinit();
         self.stack.deinit();
         self.type_table.deinit();
         self.word_table.deinit();
+        for (self.symbol_table.items) |sym| {
+            self.allocator.free(sym);
+        }
         self.symbol_table.deinit();
     }
 
@@ -353,11 +337,8 @@ pub const VM = struct {
             }
         }
 
-        // TODO need
-        // copy strings on interning
-        //   makes sense for if u can generate symbols at runtime
         const idx = self.symbol_table.items.len;
-        try self.symbol_table.append(str);
+        try self.symbol_table.append(try self.allocator.dupe(u8, str));
         try self.word_table.append(null);
         return idx;
     }
@@ -389,6 +370,7 @@ pub const VM = struct {
         }
     }
 
+    // TODO could parse these value by value
     pub fn parse(self: *Self, input: []const u8) ParseError!ArrayList(Value) {
         const State = enum {
             Empty,
@@ -473,6 +455,9 @@ pub const VM = struct {
         var q_stack = Stack(usize).init(self.allocator);
         defer q_stack.deinit();
 
+        // TODO combine this with above loop
+        // probably skip adding '}' to the return array
+        // add sentinels in place of open quotes
         for (ret.items) |value, i| {
             switch (value) {
                 .QuoteOpen => {
@@ -508,15 +493,15 @@ pub const VM = struct {
             .Sentinel => std.debug.print("#sentinel", .{}),
             .Symbol => |val| std.debug.print(":{}", .{self.symbol_table.items[val]}),
             .Word => |val| std.debug.print("\\{}", .{self.symbol_table.items[val]}),
-            .String => |val| std.debug.print("\"{}\"", .{val}),
+            .String => |val| std.debug.print("\"{}\"L", .{val}),
             .Quotation => |q| {
                 std.debug.print("q{{ ", .{});
-                // TODO fix this loop to acct for quotations
+                // TODO fix this loop to acct for quotations in quotations
                 for (q) |val| {
                     self.nicePrintValue(val);
                     std.debug.print(" ", .{});
                 }
-                std.debug.print("}}", .{});
+                std.debug.print("}}L", .{});
             },
             .FFI_Fn => |val| std.debug.print("fn({})", .{self.symbol_table.items[val.name]}),
             .FFI_Ptr => |ptr| self.type_table.items[ptr.type_id].display_fn(self, ptr),
@@ -552,18 +537,26 @@ pub const VM = struct {
         }
     }
 
-    pub fn evaluateValue(self: *Self, val: Value) EvalError!void {
+    pub fn evaluateValue(self: *Self, val: Value, restore_ct: usize) EvalError!void {
         switch (val) {
             .Quotation => |q| {
-                try self.return_stack.push(.{ .Quotation = self.current_execution });
+                try self.return_stack.push(.{
+                    .value = .{ .Quotation = self.current_execution },
+                    .restore_ct = restore_ct,
+                });
                 self.current_execution = q;
             },
             .FFI_Fn => |fp| try fp.func(self),
+            .FFI_Ptr => |ptr| {
+                if (self.type_table.items[ptr.type_id].call_fn) |call_fn| {
+                    call_fn(self, ptr);
+                } else {
+                    try self.stack.push(self.dupValue(val));
+                }
+            },
             else => try self.stack.push(self.dupValue(val)),
         }
     }
-
-    // TODO wordLookup needs to be out here to account for locals
 
     pub fn eval(self: *Self, values: []const Value) EvalError!void {
         var quotation_level: usize = 0;
@@ -581,20 +574,9 @@ pub const VM = struct {
 
                 switch (value) {
                     .Word => |idx| {
-                        // const current_locals_len = self.locals.data.items.len;
-                        // if (current_locals_len > restore_locals_len) {
-                        //     var found_local = false;
-                        //     for (self.locals.data.items[restore_locals_len..current_locals_len]) |local| {
-                        //         if (idx == local.name) {
-                        //             try self.evaluateValue(local.value);
-                        //             found_local = true;
-                        //         }
-                        //     }
-                        //     if (found_local) continue;
-                        // }
                         const found_word = self.word_table.items[idx];
                         if (found_word) |v| {
-                            try self.evaluateValue(v);
+                            try self.evaluateValue(v, 0);
                         } else {
                             self.error_info.word_not_found = self.symbol_table.items[idx];
                             return error.WordNotFound;
@@ -610,13 +592,13 @@ pub const VM = struct {
                 }
             }
 
-            while (self.restore_stack.data.items.len > 0) {
-                try self.stack.push(self.restore_stack.pop() catch unreachable);
-            }
-
             if (self.return_stack.data.items.len > 0) {
-                // TODO this is where invalid return stack errors happen
-                self.current_execution = (self.return_stack.pop() catch unreachable).Quotation;
+                const rv = self.return_stack.pop() catch unreachable;
+                var i: usize = 0;
+                while (i < rv.restore_ct) : (i += 1) {
+                    try self.stack.push(self.restore_stack.pop() catch unreachable);
+                }
+                self.current_execution = rv.value.Quotation;
             } else {
                 break;
             }

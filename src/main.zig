@@ -31,6 +31,7 @@ pub fn something(allocator: *Allocator) !void {
     }
 
     _ = try vm.installFFI_Type(&builtins.ft_vec.ffi_type);
+    _ = try vm.installFFI_Type(&builtins.ft_string.ffi_type);
     // _ = try vm.installFFI_Type(builtins.ft_proto.ft);
 
     var base_f = try readFile(allocator, "src/base.orth");
@@ -62,9 +63,9 @@ pub fn something(allocator: *Allocator) !void {
     defer test_vals.deinit();
 
     for (test_vals.items) |v| {
-        std.debug.print(". ", .{});
-        vm.nicePrintValue(v);
-        std.debug.print("\n", .{});
+        //         std.debug.print(". ", .{});
+        //         vm.nicePrintValue(v);
+        //         std.debug.print("\n", .{});
     }
 
     vm.eval(test_vals.items) catch |err| {
