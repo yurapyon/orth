@@ -3,6 +3,12 @@
 
 ; =====
 
+{ dup dup
+} :2dup @
+
+{ dup dup dup
+} :3dup @
+
 { drop drop
 } :2drop @
 
@@ -132,6 +138,9 @@ swap mod +
 { mget* drop
 } :mget @
 
+{ ; TODO
+} :curry @
+
 ; =====
 
 #sentinel :[ @
@@ -143,6 +152,14 @@ over #sentinel eq? { nip } { { vpush! } keep ]vec' } if
 { ; ( #sentinel ... a b c -- vec )
 <vec> ]vec' { vreverse! } keep
 } :]vec @
+
+{
+over #sentinel eq? { nip } { { qpush! } keep ]q' } if
+} :]q' @
+
+{ ; ( #sentinel ... a b c -- vec )
+<quotation> ]q' { qreverse! } keep
+} :]q @
 
 ; TODO rewerite without return stack
 { dup #sentinel eq? { drop <R } { swap .R mset! ]map' } if

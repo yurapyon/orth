@@ -5,10 +5,26 @@
 ; { cell
 ; } define-struct
 
-0 1 <=
-0 0 <=
-0 -1 <=
+:symbol>word ref :/ @
+
+{ 1 2 { 3 {  } 4 } } .stack
+
+"wow
+"
+
+{
+[ 1 2 :+ / ]q :q @
+q .stack drop
+3    :q ref qpush!
+:+ / :q ref qpush!
+q .stack drop
+
+:q ref
 .stack
+}
+; q .stack drop
+; 5 0 :q ref qset!
+; q .stack drop
 
 ; { [ 0 #f ]vec } "<cell>" string>symbol @
 ; { 0 swap vget } :cell-char @

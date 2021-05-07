@@ -22,64 +22,86 @@ pub fn something(allocator: *Allocator) !void {
 
     for (builtins.builtins) |bi| {
         const idx = try vm.internSymbol(bi.name);
-        vm.word_table.items[idx] = lib.Value{
-            .FFI_Fn = .{
-                .name = idx,
-                .func = bi.func,
-            },
-        };
+        //         vm.word_table.items[idx] = lib.Value{
+        //             .FFI_Fn = .{
+        //                 .name = idx,
+        //                 .func = bi.func,
+        //             },
+        //         };
     }
 
+    _ = try vm.installFFI_Type(&builtins.ft_quotation.ffi_type);
     _ = try vm.installFFI_Type(&builtins.ft_vec.ffi_type);
     _ = try vm.installFFI_Type(&builtins.ft_string.ffi_type);
     // _ = try vm.installFFI_Type(builtins.ft_proto.ft);
 
-    var base_f = try readFile(allocator, "src/base.orth");
-    defer allocator.free(base_f);
-
-    const base_vals = try vm.parse(base_f);
-    defer base_vals.deinit();
-
-    try vm.eval(base_vals.items);
-
+    //     var base_f = try readFile(allocator, "src/base.orth");
+    //     defer allocator.free(base_f);
+    //
+    //     var tk = lib.Tokenizer.init(base_f);
+    //     while (try tk.next()) |tok| {
+    //         // std.debug.print("-{}\n", .{tok});
+    //     }
+    //
+    //     const base_vals = try vm.parse(base_f);
+    //     defer base_vals.deinit();
+    //
+    //     var t = lib.Thread.init(&vm, base_vals.items);
+    //
+    //     for (base_vals.items) |v| {
+    //         std.debug.print(". ", .{});
+    //         t.nicePrintValue(v);
+    //         std.debug.print("\n", .{});
+    //     }
+    //
+    //     // try vm.eval(base_vals.items);
+    //     // var t = lib.Thread.init(&vm, base_vals.items);
+    //     while (try t.eval()) {}
+    //
     //;
 
     var f = try readFile(allocator, "tests/test.orth");
     defer allocator.free(f);
 
-    const test_vals = vm.parse(f) catch |err| {
-        switch (err) {
-            error.InvalidWord => {
-                std.log.warn("invalid word: {}", .{vm.error_info.line_number});
-                return;
-            },
-            error.InvalidString => {
-                std.log.warn("invalid string: {}", .{vm.error_info.line_number});
-                return;
-            },
-            else => return err,
-        }
-    };
+    var test_vals = std.ArrayList(lib.Value).init(allocator);
     defer test_vals.deinit();
 
-    for (test_vals.items) |v| {
-        //         std.debug.print(". ", .{});
-        //         vm.nicePrintValue(v);
-        //         std.debug.print("\n", .{});
+    var tk = lib.Tokenizer.init(f);
+    while (try tk.next()) |tok| {
+        try test_vals.append(try vm.parse(tok));
     }
 
-    vm.eval(test_vals.items) catch |err| {
-        switch (err) {
-            error.WordNotFound => {
-                std.log.warn("word not found: {}", .{vm.error_info.word_not_found});
-                return;
-            },
-            else => {
-                std.log.warn("err: {}", .{err});
-                return err;
-            },
-        }
-    };
+    //     const test_vals = vm.parse(f) catch |err| {
+    //         switch (err) {
+    //             error.InvalidWord => {
+    //                 std.log.warn("invalid word: {}", .{vm.error_info.line_number});
+    //                 return;
+    //             },
+    //             error.InvalidString => {
+    //                 std.log.warn("invalid string: {}", .{vm.error_info.line_number});
+    //                 return;
+    //             },
+    //             else => return err,
+    //         }
+    //     };
+    //     defer test_vals.deinit();
+
+    var test_t = lib.Thread.init(&vm, test_vals.items);
+    while (try test_t.eval()) {}
+    // while (try t.eval2(test_vals.items)) {}
+
+    //     while (t.eval2(test_vals.items) catch |err| {
+    //         switch (err) {
+    //             error.WordNotFound => {
+    //                 std.log.warn("word not found: {}", .{t.error_info.word_not_found});
+    //                 return;
+    //             },
+    //             else => {
+    //                 std.log.warn("err: {}", .{err});
+    //                 return err;
+    //             },
+    //         }
+    //     }) {}
 }
 
 test "main" {
