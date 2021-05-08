@@ -7,32 +7,47 @@ usingnamespace lib;
 
 //;
 
-// TODO need
 // typecheck after you get all the args u want
+
+// TODO need
 // functions
 //   eq? vs eqv?
 //   functional stuff
+//     curry compose
 //     map function for vecs vs protos should be specialized
 //       vmap! mmap!
 //     map fold
-//     curry compose
-//   math stuff
-//     handle integer overflow
-//     fract
+//       should i treat the vec like a stack?
+//       something more like 'each' makes more sense
+//         would be cool if i could temporarily use the vec as a stack
 //   type checking
 //     float? int? etc
+//     FFI_Types could have a name too
+//     could just do type-of and have it return a symbol?
+//       { type-of :float eq? } :float? @
 //   printing functions
 //     display
 //     write
+//   math stuff
+//     handle integer overflow
 //   more string manipulation
+//     things that take chars
 // types
 //   make sure accessing them from within zig is easy
-//   <vec>,literal
 
 // TODO want
 // functions
 //   bitwise operators
+//     want like u64 type or something
 // results
+// contiguous vector thing
+//   []i64, []f64 etc
+// math
+//   fract
+// vec
+//   { 1 2 3 4 } <vec>,literal
+//     should this look up words and replace them with thier value
+//     is this necessary
 
 // Vec
 //   vecs might be able to use the optimization

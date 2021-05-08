@@ -5,12 +5,14 @@
 ; { cell
 ; } define-struct
 
+; [ 1 2 3 ]vec
+; { 2 3 + }
+
 :symbol>word ref :/ @
 
-{ 1 2 { 3 {  } 4 } } .stack
-
-"wow
-"
+"wow"
+.stack
+;"wow\\"
 
 {
 [ 1 2 :+ / ]q :q @

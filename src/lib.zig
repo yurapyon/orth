@@ -20,21 +20,10 @@ const ArrayList = std.ArrayList;
 //    with renaming, excluding
 //  vm word_table is the global lookup table for all words in the session
 
+// unicode is currently not supported but i would like to have it in the future
+
 // TODO need
-// parser
-//   char type
-//     do them like #\A #\b etc
-//     #\ is an escaper thing
-//     how to do unicode?
-//   strings
-//     multiline strings
-//       do the thing where leading spaces are removed
-//       "hello
-//        world" should just be "hello\nworld"
-//     string escaping
-//   multiline comments?
-//     would be nice
-//     could use ( )
+// think abt how string escaping is done
 // zig errors
 //   put in 'catch unreachable' on stack pops/indexes that cant fail
 // error reporting
@@ -43,6 +32,11 @@ const ArrayList = std.ArrayList;
 //     use line_num in eval code
 // ffi threads
 //   yeild and resume
+//   cooperative multithreading built into vm ?
+// organize tokenizer/parser api
+//   i like having them separate
+//     should tokenizer allocate for strings becuase it needs to modify them
+//   i dont really want parser to produce errors on 'invalid symbol' or 'invalid string' etc
 
 // TODO want
 // maybe make 'and' and 'or' work like lua ?
@@ -53,6 +47,12 @@ const ArrayList = std.ArrayList;
 //     would be nice if this wasnt the case ?
 //     quotations values are self referential to the list of values
 //       would be nice if they werent but this makes it so quotations literals only encode a length
+// parser
+//   strings
+//     multiline strings
+//       could do them like zig
+//   multiline comments?
+//     could use ( )
 
 // TODO QOL
 // better int parser
@@ -69,34 +69,11 @@ const ArrayList = std.ArrayList;
 
 // errors ===
 
-pub const ErrorInfo = struct {
-    line_number: usize,
-    word_not_found: []const u8,
-};
-
 pub const StackError = error{
     StackOverflow,
     StackUnderflow,
     OutOfBounds,
 } || Allocator.Error;
-
-pub const ParseError = error{
-    InvalidString,
-    InvalidWord,
-    InvalidSymbol,
-    QuotationUnderflow,
-    UnfinishedQuotation,
-} || Allocator.Error;
-
-pub const EvalError = error{
-    WordNotFound,
-    TypeError,
-    DivideByZero,
-    NegativeDenominator,
-    Panic,
-    InvalidReturnValue,
-    InternalError,
-} || StackError || Allocator.Error;
 
 //;
 
@@ -150,15 +127,113 @@ pub fn Stack(comptime T: type) type {
 
 //;
 
+pub const StringFixer = struct {
+    const Self = @This();
+
+    const Error = error{InvalidStringEscape};
+
+    str: []const u8,
+    indent: usize,
+
+    first_line: bool,
+    char_at: usize,
+    line_at: usize,
+    col_at: usize,
+    in_escape: bool,
+
+    pub fn init(str: []const u8, indent: usize) Self {
+        return .{
+            .str = str,
+            .indent = indent,
+            .first_line = true,
+            .char_at = 0,
+            .line_at = 0,
+            .col_at = 0,
+            .in_escape = false,
+        };
+    }
+
+    pub fn reset(self: *Self) void {
+        self.* = init(self.str, self.indent);
+    }
+
+    // TODO unicode
+    pub fn parseStringEscape(ch: u8) Error!u8 {
+        return switch (ch) {
+            'n' => '\n',
+            't' => '\t',
+            '0' => 0,
+            '\\', '"' => ch,
+            else => error.InvalidStringEscape,
+        };
+    }
+
+    pub fn next(self: *Self) Error!?u8 {
+        while (self.char_at < self.str.len) {
+            const ch = self.str[self.char_at];
+            self.char_at += 1;
+
+            var ret: u8 = undefined;
+
+            if (self.in_escape) {
+                self.in_escape = false;
+                ret = try parseStringEscape(ch);
+            } else {
+                if (ch == '\\') {
+                    self.in_escape = true;
+                    continue;
+                }
+
+                if (self.first_line) {
+                    ret = ch;
+                } else {
+                    if (self.col_at >= self.indent) {
+                        ret = ch;
+                    } else {
+                        continue;
+                    }
+                }
+            }
+
+            if (ch == '\n') {
+                self.first_line = false;
+                self.line_at += 1;
+                self.col_at = 0;
+            } else {
+                self.col_at += 1;
+            }
+
+            return ret;
+        }
+
+        return null;
+    }
+};
+
+//;
+
+// tokenizer shouldnt have any errors(besides string unfinished at eof)
+//   or it should have all the errors for wether words/escapes are valid or not
+
+// TODO tokenizer should return string errors
+// maybe tokenize should copy the strings?
+// next() can take an allocator for strings
+// vm has a tokenizer
+// parse takes a []const u8
+// and returns a []Value
+
 pub const Token = struct {
-    pub const Type = enum {
-        String,
-        Word,
+    pub const Data = union(enum) {
+        String: struct {
+            str: []const u8,
+            indent: usize,
+        },
+        CharEscape: u8,
+        Symbol: []const u8,
+        Word: []const u8,
     };
 
-    ty: Type,
-    str: []const u8,
-    multiline_string_indent: usize,
+    data: Data,
 };
 
 pub const Tokenizer = struct {
@@ -166,6 +241,9 @@ pub const Tokenizer = struct {
 
     pub const Error = error{
         InvalidString,
+        UnfinishedString,
+        InvalidCharEscape,
+        InvalidSymbol,
         InvalidWord,
     };
 
@@ -177,6 +255,9 @@ pub const Tokenizer = struct {
         Empty,
         InComment,
         InString,
+        MaybeInEscape,
+        InEscape,
+        InSymbol,
         InWord,
     };
 
@@ -190,7 +271,8 @@ pub const Tokenizer = struct {
 
     start_char: usize,
     end_char: usize,
-    mstring_indent: usize,
+    in_string_escape: bool,
+    string_indent: usize,
 
     pub fn init(buf: []const u8) Self {
         return .{
@@ -201,7 +283,8 @@ pub const Tokenizer = struct {
             .col_at = 0,
             .start_char = 0,
             .end_char = 0,
-            .mstring_indent = 0,
+            .in_string_escape = false,
+            .string_indent = 0,
         };
     }
 
@@ -214,7 +297,21 @@ pub const Tokenizer = struct {
     }
 
     pub fn charIsWordValid(ch: u8) bool {
-        return ch != '"';
+        return ch != '"' and ch != ':';
+    }
+
+    pub fn parseCharEscape(str: []const u8) Error!u8 {
+        if (str.len == 1) {
+            return str[0];
+        } else {
+            if (std.mem.eql(u8, str, "space")) {
+                return '\n';
+            } else if (std.mem.eql(u8, str, "tab")) {
+                return '\t';
+            } else {
+                return error.InvalidCharEscape;
+            }
+        }
     }
 
     pub fn next(self: *Self) Error!?Token {
@@ -237,9 +334,11 @@ pub const Tokenizer = struct {
                     self.state = switch (ch) {
                         ';' => .InComment,
                         '"' => blk: {
-                            self.mstring_indent = self.col_at;
+                            self.string_indent = self.col_at;
                             break :blk .InString;
                         },
+                        '#' => .MaybeInEscape,
+                        ':' => .InSymbol,
                         else => .InWord,
                     };
                     self.start_char = self.end_char - 1;
@@ -250,22 +349,63 @@ pub const Tokenizer = struct {
                     }
                 },
                 .InString => {
-                    if (ch == '"') {
-                        self.state = .Empty;
-                        return Token{
-                            .ty = .String,
-                            .str = self.buf[(self.start_char + 1)..(self.end_char - 1)],
-                            .multiline_string_indent = self.mstring_indent,
+                    if (self.in_string_escape) {
+                        _ = StringFixer.parseStringEscape(ch) catch {
+                            return error.InvalidString;
                         };
+                        self.in_string_escape = false;
+                    } else {
+                        if (ch == '\\') {
+                            self.in_string_escape = true;
+                        } else if (ch == '"') {
+                            self.state = .Empty;
+                            return Token{
+                                .data = .{
+                                    .String = .{
+                                        .str = self.buf[(self.start_char + 1)..(self.end_char - 1)],
+                                        .indent = self.string_indent,
+                                    },
+                                },
+                            };
+                        }
+                    }
+                },
+                .MaybeInEscape => {
+                    self.state = if (ch == '\\') .InEscape else .InWord;
+                },
+                .InEscape => {
+                    if (charIsDelimiter(ch)) {
+                        self.state = .Empty;
+
+                        return Token{
+                            .data = .{
+                                .CharEscape = try parseCharEscape(
+                                    self.buf[(self.start_char + 2)..(self.end_char - 1)],
+                                ),
+                            },
+                        };
+                    }
+                },
+                .InSymbol => {
+                    if (charIsDelimiter(ch)) {
+                        self.state = .Empty;
+                        const name = self.buf[(self.start_char + 1)..(self.end_char - 1)];
+                        if (name.len == 0) return error.InvalidSymbol;
+                        return Token{
+                            .data = .{ .Symbol = name },
+                        };
+                    } else if (!charIsWordValid(ch)) {
+                        self.error_info.line_number = self.line_at - 1;
+                        return error.InvalidSymbol;
                     }
                 },
                 .InWord => {
                     if (charIsDelimiter(ch)) {
                         self.state = .Empty;
                         return Token{
-                            .ty = .Word,
-                            .str = self.buf[self.start_char..(self.end_char - 1)],
-                            .multiline_string_indent = undefined,
+                            .data = .{
+                                .Word = self.buf[self.start_char..(self.end_char - 1)],
+                            },
                         };
                     } else if (!charIsWordValid(ch)) {
                         self.error_info.line_number = self.line_at - 1;
@@ -279,16 +419,18 @@ pub const Tokenizer = struct {
                 .InComment => {},
                 .InString => {
                     self.error_info.line_number = self.line_at - 1;
-                    return error.InvalidString;
+                    return error.UnfinishedString;
                 },
                 .InWord => {
                     self.state = .Empty;
                     return Token{
-                        .ty = .Word,
-                        .str = self.buf[self.start_char..self.end_char],
-                        .multiline_string_indent = undefined,
+                        .data = .{
+                            .Word = self.buf[self.start_char..(self.end_char - 1)],
+                        },
                     };
                 },
+                // TODO
+                else => {},
             }
         }
 
@@ -296,43 +438,12 @@ pub const Tokenizer = struct {
     }
 };
 
-// pub const Parser = struct {
-//     const Self = @This();
-//
-//     pub const Error = error{
-//         InvalidSymbol,
-//         QuotationUnderflow,
-//         UnfinishedQuotation,
-//     } || Allocator.Error;
-//
-//     pub const State = enum {
-//         Empty,
-//         InQuotation,
-//     };
-//
-//     buf: []const Token,
-//
-//     state: State,
-//     error_info: ErrorInfo,
-//
-//     pub fn init(buf: []const Token) Self {
-//         return .{
-//             .buf = buf,
-//             .state = .Empty,
-//             .error_info = undefined,
-//         };
-//     }
-//
-//     pub fn next(self: *Self) Error!?Value {}
-// };
-
 //;
 
 pub const FFI_Fn = struct {
-    pub const Function = fn (*Thread) EvalError!void;
+    pub const Function = fn (*Thread) Thread.Error!void;
 
     name: usize,
-    // func: fn () EvalError!void,
     func: Function,
 };
 
@@ -373,7 +484,7 @@ pub const FFI_Type = struct {
 
     call_fn: ?fn (*Thread, FFI_Ptr) []const Value = null,
     display_fn: fn (*Thread, FFI_Ptr) void = defaultDisplay,
-    // TODO this should be *Thread, FFI_Ptr, Value
+    // TODO this could be *Thread, FFI_Ptr, Value
     equals_fn: fn (*Thread, FFI_Ptr, FFI_Ptr) bool = defaultEquals,
     dup_fn: fn (*VM, FFI_Ptr) FFI_Ptr = defaultDup,
     drop_fn: fn (*VM, FFI_Ptr) void = defaultDrop,
@@ -393,9 +504,7 @@ pub const FFI_Type = struct {
         return ptr;
     }
 
-    fn defaultDrop(t: *VM, ptr: FFI_Ptr) void {
-        return true;
-    }
+    fn defaultDrop(t: *VM, ptr: FFI_Ptr) void {}
 
     //;
 
@@ -406,7 +515,7 @@ pub const FFI_Type = struct {
         };
     }
 
-    pub fn checkType(self: Self, ptr: FFI_Ptr) EvalError!void {
+    pub fn checkType(self: Self, ptr: FFI_Ptr) Thread.Error!void {
         if (ptr.type_id != self.type_id) {
             return error.TypeError;
         }
@@ -423,6 +532,10 @@ pub const ReturnValue = struct {
 pub const VM = struct {
     const Self = @This();
 
+    pub const ErrorInfo = struct {
+        word_not_found: []const u8,
+    };
+
     allocator: *Allocator,
     error_info: ErrorInfo,
 
@@ -430,20 +543,28 @@ pub const VM = struct {
     word_table: ArrayList(?Value),
     type_table: ArrayList(*const FFI_Type),
 
+    quote_open_id: usize,
+    quote_close_id: usize,
+
     // TODO
     // string_literals: ArrayList([]const u8),
     // how to do this?
     // quotation_literals: ArrayList([]const Value),
 
-    pub fn init(allocator: *Allocator) Self {
-        var ret = .{
+    pub fn init(allocator: *Allocator) Allocator.Error!Self {
+        var ret = Self{
             .allocator = allocator,
             .error_info = undefined,
 
             .symbol_table = ArrayList([]const u8).init(allocator),
             .word_table = ArrayList(?Value).init(allocator),
             .type_table = ArrayList(*const FFI_Type).init(allocator),
+
+            .quote_open_id = undefined,
+            .quote_close_id = undefined,
         };
+        ret.quote_open_id = try ret.internSymbol("{");
+        ret.quote_close_id = try ret.internSymbol("}");
         return ret;
     }
 
@@ -477,83 +598,39 @@ pub const VM = struct {
         return idx;
     }
 
-    // TODO make an iterator and use that
-    pub fn parseStringLiteral(allocator: *Allocator, str: []const u8, indent: usize) []u8 {
-        var line_at: usize = 0;
-        var col_at: usize = 0;
-        var buf_sz: usize = 0;
-
-        var first_line: bool = true;
-
-        for (tok) |ch| {
-            // TODO need to handle escaped chars
-            if (first_line) {
-                buf_sz += 1;
-            } else {
-                if (col_at >= indent) {
-                    buf_sz += 1;
+    pub fn parse(self: *Self, token: Token) Allocator.Error!Value {
+        switch (token.data) {
+            .String => |str_data| {
+                var ct: usize = 0;
+                var fixer = StringFixer.init(str_data.str, str_data.indent);
+                while (fixer.next() catch unreachable) |_| {
+                    ct += 1;
                 }
-            }
 
-            if (ch == '\n') {
-                first_line = false;
-                line_at += 1;
-                col_at = 0;
-            } else {
-                col_at += 1;
-            }
-        }
-
-        var ret = try allocator.alloc(u8, buf_sz);
-        var buf_at = 0;
-
-        line_at = 0;
-        col_at = 0;
-        first_line = true;
-
-        for (tok) |ch| {
-            if (first_line) {
-                ret[buf_at] = ch;
-                buf_at += 1;
-            } else {
-                if (col_at >= indent) {
-                    ret[buf_at] = ch;
-                    buf_at += 1;
+                var buf = try self.allocator.alloc(u8, ct);
+                fixer.reset();
+                ct = 0;
+                while (fixer.next() catch unreachable) |ch| {
+                    buf[ct] = ch;
+                    ct += 1;
                 }
-            }
 
-            if (ch == '\n') {
-                first_line = false;
-                line_at += 1;
-                col_at = 0;
-            } else {
-                col_at += 1;
-            }
-        }
-
-        return ret;
-    }
-
-    pub fn parse(self: *Self, token: Token) ParseError!Value {
-        switch (token.ty) {
-            .String => return Value{ .Sentinel = {} },
-            .Word => {
-                const word = token.str;
-
+                return Value{ .String = buf };
+            },
+            .CharEscape => |ch| {
+                return Value{ .Char = ch };
+            },
+            .Symbol => |sym| {
+                return Value{ .Symbol = try self.internSymbol(sym) };
+            },
+            .Word => |word| {
                 const try_parse_float =
                     !std.mem.eql(u8, word, "+") and
                     !std.mem.eql(u8, word, "-") and
                     !std.mem.eql(u8, word, ".");
                 const fl = std.fmt.parseFloat(f32, word) catch null;
 
-                if (word[0] == ':') {
-                    if (word.len == 1) {
-                        self.error_info.line_number = 0;
-                        return error.InvalidSymbol;
-                    } else {
-                        return Value{ .Symbol = try self.internSymbol(word[1..]) };
-                    }
-                } else if (std.fmt.parseInt(i32, word, 10) catch null) |i| {
+                if (std.fmt.parseInt(i32, word, 10) catch null) |i| {
                     return Value{ .Int = i };
                 } else if (try_parse_float and (fl != null)) {
                     return Value{ .Float = fl.? };
@@ -564,157 +641,6 @@ pub const VM = struct {
         }
     }
 
-    //     pub fn parseWord(self: *Self, word: []const u8) ParseError!Value {
-    //         var try_parse_float =
-    //             !std.mem.eql(u8, word, "+") and
-    //             !std.mem.eql(u8, word, "-") and
-    //             !std.mem.eql(u8, word, ".");
-    //         const fl = std.fmt.parseFloat(f32, word) catch null;
-    //
-    //         if (word[0] == ':') {
-    //             if (word.len == 1) {
-    //                 self.error_info.line_number = 0;
-    //                 return error.InvalidSymbol;
-    //             } else {
-    //                 return Value{ .Symbol = try self.internSymbol(word[1..]) };
-    //             }
-    //         } else if (std.fmt.parseInt(i32, word, 10) catch null) |i| {
-    //             return Value{ .Int = i };
-    //         } else if (try_parse_float and (fl != null)) {
-    //             return Value{ .Float = fl.? };
-    //         } else {
-    //             return Value{ .Word = try self.internSymbol(word) };
-    //         }
-    //     }
-    //
-    //     // TODO could parse these value by value
-    //     pub fn parse(self: *Self, input: []const u8) ParseError!ArrayList(Value) {
-    //         const State = enum {
-    //             Empty,
-    //             InComment,
-    //             InString,
-    //             InWord,
-    //         };
-    //
-    //         var state: State = .Empty;
-    //         var start: usize = 0;
-    //         var end: usize = 0;
-    //
-    //         var col: usize = 0;
-    //         var string_start_col: usize = 0;
-    //
-    //         var ret = ArrayList(Value).init(self.allocator);
-    //         errdefer ret.deinit();
-    //
-    //         var q_stack = Stack(usize).init(self.allocator);
-    //         defer q_stack.deinit();
-    //
-    //         var line_num: usize = 1;
-    //
-    //         for (input) |ch, i| {
-    //             switch (state) {
-    //                 .Empty => {
-    //                     if (ch == ' ') {
-    //                         continue;
-    //                     }
-    //                     state = switch (ch) {
-    //                         ';' => .InComment,
-    //                         '"' => blk: {
-    //                             string_start_col = 0;
-    //                             break :blk .InString;
-    //                         },
-    //                         else => .InWord,
-    //                     };
-    //                     start = i;
-    //                     end = start;
-    //                 },
-    //                 .InComment => {
-    //                     if (ch == '\n') {
-    //                         state = .Empty;
-    //                     }
-    //                 },
-    //                 .InString => {
-    //                     if (ch == '"') {
-    //                         try ret.append(.{ .String = input[(start + 1)..(end + 1)] });
-    //                         state = .Empty;
-    //                         continue;
-    //                         // } else if (ch == '\n') {
-    //                         // self.error_info.line_number = line_num;
-    //                         // return error.InvalidString;
-    //                     }
-    //                     end += 1;
-    //                 },
-    //                 .InWord => {
-    //                     if (charIsDelimiter(ch)) {
-    //                         const word = input[start..(end + 1)];
-    //                         if (std.mem.eql(u8, word, "{")) {
-    //                             try q_stack.push(ret.items.len);
-    //                             try ret.append(undefined);
-    //                         } else if (std.mem.eql(u8, word, "}")) {
-    //                             if (q_stack.data.items.len == 0) {
-    //                                 return error.QuotationUnderflow;
-    //                             }
-    //                             const q_start = q_stack.pop() catch unreachable;
-    //                             ret.items[q_start] = .{ .Quotation = ret.items[(q_start + 1)..ret.items.len] };
-    //                         } else {
-    //                             try ret.append(try self.parseWord(word));
-    //                         }
-    //                         state = .Empty;
-    //                         continue;
-    //                     } else if (!charIsWordValid(ch)) {
-    //                         self.error_info.line_number = line_num;
-    //                         return error.InvalidWord;
-    //                     }
-    //
-    //                     end += 1;
-    //                 },
-    //             }
-    //
-    //             // TODO where to put this so line numbers are properly reported
-    //             //   if \n causes the error
-    //             if (ch == '\n') {
-    //                 line_num += 1;
-    //                 col = 0;
-    //             } else {
-    //                 col += 1;
-    //             }
-    //         }
-    //
-    //         switch (state) {
-    //             .InString => {
-    //                 self.error_info.line_number = line_num;
-    //                 return error.InvalidString;
-    //             },
-    //             .InWord => {
-    //                 const word = input[start..(end + 1)];
-    //                 if (std.mem.eql(u8, word, "{")) {
-    //                     try q_stack.push(ret.items.len);
-    //                     try ret.append(undefined);
-    //                 } else if (std.mem.eql(u8, word, "}")) {
-    //                     if (q_stack.data.items.len == 0) {
-    //                         return error.QuotationUnderflow;
-    //                     }
-    //                     const q_start = q_stack.pop() catch unreachable;
-    //                     ret.items[q_start] = .{ .Quotation = ret.items[(q_start + 1)..(ret.items.len - 1)] };
-    //                 } else {
-    //                     try ret.append(try self.parseWord(word));
-    //                 }
-    //             },
-    //             else => {},
-    //         }
-    //
-    //         // note: fixing self refernces
-    //         for (ret.items) |*val, i| {
-    //             if (val.* == .Quotation) {
-    //                 val.Quotation.ptr = @ptrCast([*]const Value, &ret.items[i + 1]);
-    //             }
-    //         }
-    //
-    //         if (q_stack.data.items.len > 0) return error.UnfinishedQuotation;
-    //
-    //         return ret;
-    //     }
-    //
     // eval ===
 
     pub fn installFFI_Type(self: *Self, ty: *FFI_Type) Allocator.Error!void {
@@ -748,6 +674,21 @@ pub const VM = struct {
 pub const Thread = struct {
     const Self = @This();
 
+    pub const Error = error{
+        WordNotFound,
+        TypeError,
+        DivideByZero,
+        NegativeDenominator,
+        Panic,
+        InvalidReturnValue,
+        InternalError,
+    } || StackError || Allocator.Error;
+
+    pub const ErrorInfo = struct {
+        line_number: usize,
+        word_not_found: []const u8,
+    };
+
     vm: *VM,
     // TODO maybe get rid of this
     error_info: ErrorInfo,
@@ -759,7 +700,10 @@ pub const Thread = struct {
     restore_stack: Stack(Value),
     callables_stack: Stack(Value),
 
-    q_stack: Stack([]const Value),
+    // note: this coud be a Stack([]const Value)
+    //   but there is a zig bug
+    //   just going to use a Value that will always be a Value.Quotation
+    q_stack: Stack(Value),
 
     pub fn init(vm: *VM, values: []const Value) Self {
         var ret = .{
@@ -773,7 +717,7 @@ pub const Thread = struct {
             .restore_stack = Stack(Value).init(vm.allocator),
             .callables_stack = Stack(Value).init(vm.allocator),
 
-            .q_stack = Stack([]const Value).init(vm.allocator),
+            .q_stack = Stack(Value).init(vm.allocator),
         };
         return ret;
     }
@@ -795,7 +739,11 @@ pub const Thread = struct {
         switch (value) {
             .Int => |val| std.debug.print("{}", .{val}),
             .Float => |val| std.debug.print("{d}f", .{val}),
-            .Char => |val| std.debug.print("{c}", .{val}),
+            .Char => |val| switch (val) {
+                '\n' => std.debug.print("#\\space", .{}),
+                '\t' => std.debug.print("#\\tab", .{}),
+                else => std.debug.print("#\\{c}", .{val}),
+            },
             .Boolean => |val| {
                 const str = if (val) "#t" else "#f";
                 std.debug.print("{s}", .{str});
@@ -806,12 +754,9 @@ pub const Thread = struct {
             .String => |val| std.debug.print("\"{}\"L", .{val}),
             .Quotation => |q| {
                 std.debug.print("q{{ ", .{});
-                var i: usize = 0;
-                while (i < q.len) : (i += 1) {
-                    const val = q[i];
+                for (q) |val| {
                     self.nicePrintValue(val);
                     std.debug.print(" ", .{});
-                    if (val == .Quotation) i += val.Quotation.len;
                 }
                 std.debug.print("}}L", .{});
             },
@@ -822,7 +767,7 @@ pub const Thread = struct {
 
     //;
 
-    pub fn evaluateValue(self: *Self, val: Value, restore_ct: usize) EvalError!void {
+    pub fn evaluateValue(self: *Self, val: Value, restore_ct: usize) Error!void {
         switch (val) {
             .Quotation => |q| {
                 // note: TCO
@@ -835,8 +780,7 @@ pub const Thread = struct {
                 }
                 self.current_execution = q;
             },
-            // .FFI_Fn => |fp| try fp.func(self),
-            .FFI_Fn => |fp| try fp.func(),
+            .FFI_Fn => |fp| try fp.func(self),
             .FFI_Ptr => |ptr| {
                 if (self.vm.type_table.items[ptr.type_id].call_fn) |call_fn| {
                     try self.return_stack.push(.{
@@ -854,7 +798,7 @@ pub const Thread = struct {
         }
     }
 
-    pub fn eval(self: *Self) EvalError!bool {
+    pub fn eval(self: *Self) Error!bool {
         while (self.current_execution.len != 0) {
             var value = self.current_execution[0];
 
@@ -863,13 +807,14 @@ pub const Thread = struct {
 
             switch (value) {
                 .Word => |idx| {
-                    if (idx == try self.vm.internSymbol("{")) {
-                        try self.q_stack.push(self.current_execution[1..]);
-                    } else if (idx == try self.vm.internSymbol("}")) {
+                    if (idx == self.vm.quote_open_id) {
+                        try self.q_stack.push(.{ .Quotation = self.current_execution[0..] });
+                    } else if (idx == self.vm.quote_close_id) {
                         var q = try self.q_stack.pop();
-                        const len = @ptrToInt(self.current_execution.ptr) - @ptrToInt(q.ptr);
-                        q.len = len;
-                        try self.stack.push(.{ .Quotation = q });
+                        if (self.q_stack.data.items.len == 0) {
+                            q.Quotation.len -= self.current_execution.len + 1;
+                            try self.stack.push(q);
+                        }
                     } else {
                         if (self.q_stack.data.items.len > 0) {
                             return true;
@@ -884,7 +829,11 @@ pub const Thread = struct {
                         }
                     }
                 },
-                else => |val| try self.stack.push(val),
+                else => |val| {
+                    if (self.q_stack.data.items.len == 0) {
+                        try self.stack.push(val);
+                    }
+                },
             }
 
             return true;
