@@ -15,6 +15,7 @@ pub fn readFile(allocator: *Allocator, filename: []const u8) ![]u8 {
 pub fn something(allocator: *Allocator) !void {
     var vm = try lib.VM.init(allocator);
     defer vm.deinit();
+
     try vm.defineWord("#t", .{ .Boolean = true });
     try vm.defineWord("#f", .{ .Boolean = false });
     try vm.defineWord("#sentinel", .{ .Sentinel = {} });
@@ -46,6 +47,7 @@ pub fn something(allocator: *Allocator) !void {
     }
 
     var t = lib.Thread.init(&vm, base_vals.items);
+    defer t.deinit();
 
     for (base_vals.items) |v| {
         // std.debug.print(". ", .{});
@@ -69,38 +71,23 @@ pub fn something(allocator: *Allocator) !void {
         try test_vals.append(try vm.parse(tok));
     }
 
-    //     const test_vals = vm.parse(f) catch |err| {
-    //         switch (err) {
-    //             error.InvalidWord => {
-    //                 std.log.warn("invalid word: {}", .{vm.error_info.line_number});
-    //                 return;
-    //             },
-    //             error.InvalidString => {
-    //                 std.log.warn("invalid string: {}", .{vm.error_info.line_number});
-    //                 return;
-    //             },
-    //             else => return err,
-    //         }
-    //     };
-    //     defer test_vals.deinit();
-
     var test_t = lib.Thread.init(&vm, test_vals.items);
-    while (try test_t.eval()) {}
-    // for (test_t.stack.data.items) |v| {}
-    // while (try t.eval2(test_vals.items)) {}
-
-    //     while (t.eval2(test_vals.items) catch |err| {
-    //         switch (err) {
-    //             error.WordNotFound => {
-    //                 std.log.warn("word not found: {}", .{t.error_info.word_not_found});
-    //                 return;
-    //             },
-    //             else => {
-    //                 std.log.warn("err: {}", .{err});
-    //                 return err;
-    //             },
-    //         }
-    //     }) {}
+    defer test_t.deinit();
+    while (true) {
+        var running = test_t.eval() catch |err| {
+            switch (err) {
+                error.WordNotFound => {
+                    std.log.warn("word not found: {}", .{test_t.error_info.word_not_found});
+                    return;
+                },
+                else => {
+                    std.log.warn("err: {}", .{err});
+                    return err;
+                },
+            }
+        };
+        if (!running) break;
+    }
 }
 
 test "main" {

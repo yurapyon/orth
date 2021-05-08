@@ -9,22 +9,18 @@ usingnamespace lib;
 
 // typecheck after you get all the args u want
 
+//;
+
 // TODO need
 // functions
-//   eq? vs eqv?
 //   functional stuff
-//     curry compose
+//     compose
 //     map function for vecs vs protos should be specialized
 //       vmap! mmap!
 //     map fold
 //       should i treat the vec like a stack?
 //       something more like 'each' makes more sense
 //         would be cool if i could temporarily use the vec as a stack
-//   type checking
-//     float? int? etc
-//     FFI_Types could have a name too
-//     could just do type-of and have it return a symbol?
-//       { type-of :float eq? } :float? @
 //   printing functions
 //     display
 //     write
@@ -45,9 +41,9 @@ usingnamespace lib;
 // math
 //   fract
 // vec
-//   { 1 2 3 4 } <vec>,literal
-//     should this look up words and replace them with thier value
-//     is this necessary
+//   { 1 2 3 4 } <vec>,clone
+//     essentially just <quotation>,clone quotation>vec
+//       could probably just write it in orth but gotta make sure the memory stuff works
 
 // Vec
 //   vecs might be able to use the optimization
@@ -57,12 +53,11 @@ usingnamespace lib;
 
 //;
 
-pub fn f_panic(t: *Thread) EvalError!void {
+pub fn f_panic(t: *Thread) Thread.Error!void {
     return error.Panic;
 }
 
-// TODO cant use defineWord here because name is already interned
-pub fn f_define(t: *Thread) EvalError!void {
+pub fn f_define(t: *Thread) Thread.Error!void {
     const name = try t.stack.pop();
     const value = try t.stack.pop();
     if (name != .Symbol) return error.TypeError;
@@ -76,7 +71,7 @@ pub fn f_define(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_ref(t: *Thread) EvalError!void {
+pub fn f_ref(t: *Thread) Thread.Error!void {
     const name = try t.stack.pop();
     if (name != .Symbol) return error.TypeError;
 
@@ -88,24 +83,24 @@ pub fn f_ref(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_eval(t: *Thread) EvalError!void {
+pub fn f_eval(t: *Thread) Thread.Error!void {
     const val = try t.stack.pop();
     try t.evaluateValue(val, 0);
     t.vm.dropValue(val);
 }
 
-pub fn f_clear_stack(t: *Thread) EvalError!void {
+pub fn f_clear_stack(t: *Thread) Thread.Error!void {
     // TODO handle rc
     t.stack.data.items.len = 0;
 }
 
-pub fn f_print_top(t: *Thread) EvalError!void {
+pub fn f_print_top(t: *Thread) Thread.Error!void {
     std.debug.print("TOP| ", .{});
     t.nicePrintValue(try t.stack.peek());
     std.debug.print("\n", .{});
 }
 
-pub fn f_print_stack(t: *Thread) EvalError!void {
+pub fn f_print_stack(t: *Thread) Thread.Error!void {
     std.debug.print("STACK| len: {}\n", .{t.stack.data.items.len});
     for (t.stack.data.items) |it, i| {
         std.debug.print("  {}| ", .{t.stack.data.items.len - i - 1});
@@ -116,26 +111,68 @@ pub fn f_print_stack(t: *Thread) EvalError!void {
 
 // built in types ===
 
-// TODO type checking like int? float? etc
+pub fn f_type_of(t: *Thread) Thread.Error!void {
+    const val = try t.stack.pop();
+    const id: VM.BuiltInIds = switch (val) {
+        .Int => .Int,
+        .Float => .Float,
+        .Char => .Char,
+        .Boolean => .Boolean,
+        .Sentinel => .Sentinel,
+        .String => .String,
+        .Word => .Word,
+        .Symbol => .Symbol,
+        .Quotation => .Quotation,
+        .FFI_Fn => .FFI_Fn,
+        .FFI_Ptr => .FFI_Ptr,
+    };
+    try t.stack.push(.{ .Symbol = @enumToInt(id) });
+    t.vm.dropValue(val);
+}
 
-pub fn f_symbol_to_word(t: *Thread) EvalError!void {
+pub fn f_ffi_type_of(t: *Thread) Thread.Error!void {
+    const val = try t.stack.pop();
+    if (val != .FFI_Ptr) return error.TypeError;
+    try t.stack.push(.{ .Symbol = t.vm.type_table.items[val.FFI_Ptr.type_id].name_id });
+    t.vm.dropValue(val);
+}
+
+pub fn f_word_to_symbol(t: *Thread) Thread.Error!void {
+    const word = try t.stack.pop();
+    if (word != .Word) return error.TypeError;
+    try t.stack.push(.{ .Symbol = word.Word });
+}
+
+pub fn f_symbol_to_word(t: *Thread) Thread.Error!void {
     const sym = try t.stack.pop();
     if (sym != .Symbol) return error.TypeError;
     try t.stack.push(.{ .Word = sym.Symbol });
 }
 
+pub fn f_string_to_symbol(t: *Thread) Thread.Error!void {
+    const str = try t.stack.pop();
+    if (str != .String) return error.TypeError;
+    try t.stack.push(.{ .Symbol = try t.vm.internSymbol(str.String) });
+}
+
+pub fn f_symbol_to_string(t: *Thread) Thread.Error!void {
+    const sym = try t.stack.pop();
+    if (sym != .Symbol) return error.TypeError;
+    try t.stack.push(.{ .String = t.vm.symbol_table.items[sym.Symbol] });
+}
+
 // math ===
 
-pub fn f_negative(t: *Thread) EvalError!void {
-    const a = try t.stack.pop();
-    switch (a) {
-        .Int => |i| try t.stack.push(.{ .Int = -a.Int }),
-        .Float => |f| try t.stack.push(.{ .Float = -a.Float }),
+pub fn f_negative(t: *Thread) Thread.Error!void {
+    const val = try t.stack.pop();
+    switch (val) {
+        .Int => |i| try t.stack.push(.{ .Int = -i }),
+        .Float => |f| try t.stack.push(.{ .Float = -f }),
         else => return error.TypeError,
     }
 }
 
-pub fn f_plus(t: *Thread) EvalError!void {
+pub fn f_plus(t: *Thread) Thread.Error!void {
     const b = try t.stack.pop();
     const a = try t.stack.pop();
     if (@as(@TagType(Value), a) != b) return error.TypeError;
@@ -146,7 +183,7 @@ pub fn f_plus(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_minus(t: *Thread) EvalError!void {
+pub fn f_minus(t: *Thread) Thread.Error!void {
     const b = try t.stack.pop();
     const a = try t.stack.pop();
     if (@as(@TagType(Value), a) != b) return error.TypeError;
@@ -157,7 +194,7 @@ pub fn f_minus(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_times(t: *Thread) EvalError!void {
+pub fn f_times(t: *Thread) Thread.Error!void {
     const b = try t.stack.pop();
     const a = try t.stack.pop();
     if (@as(@TagType(Value), a) != b) return error.TypeError;
@@ -168,7 +205,7 @@ pub fn f_times(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_divide(t: *Thread) EvalError!void {
+pub fn f_divide(t: *Thread) Thread.Error!void {
     const b = try t.stack.pop();
     const a = try t.stack.pop();
     if (@as(@TagType(Value), a) != b) return error.TypeError;
@@ -185,7 +222,7 @@ pub fn f_divide(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_mod(t: *Thread) EvalError!void {
+pub fn f_mod(t: *Thread) Thread.Error!void {
     const b = try t.stack.pop();
     const a = try t.stack.pop();
     if (@as(@TagType(Value), a) != b) return error.TypeError;
@@ -204,7 +241,7 @@ pub fn f_mod(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_rem(t: *Thread) EvalError!void {
+pub fn f_rem(t: *Thread) Thread.Error!void {
     const b = try t.stack.pop();
     const a = try t.stack.pop();
     if (@as(@TagType(Value), a) != b) return error.TypeError;
@@ -223,7 +260,7 @@ pub fn f_rem(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_lt(t: *Thread) EvalError!void {
+pub fn f_lt(t: *Thread) Thread.Error!void {
     const b = try t.stack.pop();
     const a = try t.stack.pop();
     if (@as(@TagType(Value), a) != b) return error.TypeError;
@@ -234,7 +271,7 @@ pub fn f_lt(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_number_equal(t: *Thread) EvalError!void {
+pub fn f_number_equal(t: *Thread) Thread.Error!void {
     const b = try t.stack.pop();
     const a = try t.stack.pop();
     if (@as(@TagType(Value), a) != b) return error.TypeError;
@@ -245,13 +282,13 @@ pub fn f_number_equal(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_float_to_int(t: *Thread) EvalError!void {
+pub fn f_float_to_int(t: *Thread) Thread.Error!void {
     const a = try t.stack.pop();
     if (a != .Float) return error.TypeError;
     try t.stack.push(.{ .Int = @floatToInt(i32, a.Float) });
 }
 
-pub fn f_int_to_float(t: *Thread) EvalError!void {
+pub fn f_int_to_float(t: *Thread) Thread.Error!void {
     const a = try t.stack.pop();
     if (a != .Int) return error.TypeError;
     try t.stack.push(.{ .Float = @intToFloat(f32, a.Int) });
@@ -259,7 +296,7 @@ pub fn f_int_to_float(t: *Thread) EvalError!void {
 
 // conditionals ===
 
-pub fn f_choose(t: *Thread) EvalError!void {
+pub fn f_choose(t: *Thread) Thread.Error!void {
     const if_false = try t.stack.pop();
     const if_true = try t.stack.pop();
     const condition = try t.stack.pop();
@@ -278,40 +315,78 @@ pub fn f_choose(t: *Thread) EvalError!void {
     }
 }
 
-pub fn f_equal(t: *Thread) EvalError!void {
-    const a = try t.stack.pop();
-    const b = try t.stack.pop();
-    const are_equal = if (@as(@TagType(Value), a) == b) switch (a) {
+fn areValuesEqual(a: Value, b: Value) bool {
+    return if (@as(@TagType(Value), a) == b) switch (a) {
         .Int => |val| val == b.Int,
         .Float => |val| val == b.Float,
-        .Boolean => |val| val == b.Boolean,
         .Char => |val| val == b.Char,
+        .Boolean => |val| val == b.Boolean,
         .Sentinel => true,
-        .Symbol => |val| val == b.Symbol,
+        .String => |val| val.ptr == b.String.ptr and
+            val.len == b.String.len,
         .Word => |val| val == b.Word,
-        // TODO
-        .String => false,
-        .Quotation => false,
+        .Symbol => |val| val == b.Symbol,
+        .Quotation => |val| val.ptr == b.Quotation.ptr and
+            val.len == b.Quotation.len,
         .FFI_Fn => |ptr| ptr.name == b.FFI_Fn.name and
             ptr.func == b.FFI_Fn.func,
-        // TODO
-        .FFI_Ptr => false,
-    } else blk: {
-        // TODO compare FFI_Ptr strings and quotations to literals
-        break :blk false;
-    };
+        .FFI_Ptr => |ptr| ptr.type_id == b.FFI_Ptr.type_id and
+            ptr.ptr == b.FFI_Ptr.ptr,
+    } else false;
+}
+
+pub fn f_equal(t: *Thread) Thread.Error!void {
+    const a = try t.stack.pop();
+    const b = try t.stack.pop();
+    const are_equal = areValuesEqual(a, b);
     t.vm.dropValue(a);
     t.vm.dropValue(b);
     try t.stack.push(.{ .Boolean = are_equal });
 }
 
-pub fn f_not(t: *Thread) EvalError!void {
+fn areValuesEquivalent(t: *Thread, a: Value, b: Value) bool {
+    return if (@as(@TagType(Value), a) == b) switch (a) {
+        .Int,
+        .Float,
+        .Boolean,
+        .Char,
+        .Sentinel,
+        .Symbol,
+        .Word,
+        .FFI_Fn,
+        => areValuesEqual(a, b),
+        .String => |val| std.mem.eql(u8, val, b.String),
+        // TODO do this differently so u dont use the zig stack?
+        // could just use the return stack
+        .Quotation => |val| blk: {
+            for (val) |v, i| {
+                if (!areValuesEquivalent(t, v, b.Quotation[i])) break :blk false;
+            }
+            break :blk true;
+        },
+        .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].equivalent_fn(t, ptr, b),
+    } else blk: {
+        // TODO
+        break :blk false;
+    };
+}
+
+pub fn f_equivalent(t: *Thread) Thread.Error!void {
+    const a = try t.stack.pop();
+    const b = try t.stack.pop();
+    const are_equivalent = areValuesEquivalent(t, a, b);
+    t.vm.dropValue(a);
+    t.vm.dropValue(b);
+    try t.stack.push(.{ .Boolean = are_equivalent });
+}
+
+pub fn f_not(t: *Thread) Thread.Error!void {
     const b = try t.stack.pop();
     if (b != .Boolean) return error.TypeError;
     try t.stack.push(.{ .Boolean = !b.Boolean });
 }
 
-pub fn f_and(t: *Thread) EvalError!void {
+pub fn f_and(t: *Thread) Thread.Error!void {
     const a = try t.stack.pop();
     const b = try t.stack.pop();
     if (a != .Boolean) return error.TypeError;
@@ -319,7 +394,7 @@ pub fn f_and(t: *Thread) EvalError!void {
     try t.stack.push(.{ .Boolean = a.Boolean and b.Boolean });
 }
 
-pub fn f_or(t: *Thread) EvalError!void {
+pub fn f_or(t: *Thread) Thread.Error!void {
     const a = try t.stack.pop();
     const b = try t.stack.pop();
     if (a != .Boolean) return error.TypeError;
@@ -329,7 +404,7 @@ pub fn f_or(t: *Thread) EvalError!void {
 
 // return stack ===
 
-pub fn f_to_r(t: *Thread) EvalError!void {
+pub fn f_to_r(t: *Thread) Thread.Error!void {
     try t.return_stack.push(.{
         .value = try t.stack.pop(),
         .restore_ct = std.math.maxInt(usize),
@@ -337,50 +412,66 @@ pub fn f_to_r(t: *Thread) EvalError!void {
     });
 }
 
-pub fn f_from_r(t: *Thread) EvalError!void {
+pub fn f_from_r(t: *Thread) Thread.Error!void {
     try t.stack.push((try t.return_stack.pop()).value);
 }
 
-pub fn f_peek_r(t: *Thread) EvalError!void {
+pub fn f_peek_r(t: *Thread) Thread.Error!void {
     try t.stack.push(t.vm.dupValue((try t.return_stack.peek()).value));
 }
 
 // shuffle ===
 
-pub fn f_drop(t: *Thread) EvalError!void {
+pub fn f_drop(t: *Thread) Thread.Error!void {
     const val = try t.stack.pop();
     t.vm.dropValue(val);
 }
 
-pub fn f_dup(t: *Thread) EvalError!void {
+pub fn f_dup(t: *Thread) Thread.Error!void {
     const val = try t.stack.peek();
     try t.stack.push(t.vm.dupValue(val));
 }
 
-pub fn f_over(t: *Thread) EvalError!void {
+pub fn f_2dup(t: *Thread) Thread.Error!void {
+    const a = try t.stack.peek();
+    const b = (try t.stack.index(1)).*;
+    try t.stack.push(t.vm.dupValue(b));
+    try t.stack.push(t.vm.dupValue(a));
+}
+
+pub fn f_3dup(t: *Thread) Thread.Error!void {
+    const a = try t.stack.peek();
+    const b = (try t.stack.index(1)).*;
+    const c = (try t.stack.index(2)).*;
+    try t.stack.push(t.vm.dupValue(c));
+    try t.stack.push(t.vm.dupValue(b));
+    try t.stack.push(t.vm.dupValue(a));
+}
+
+pub fn f_over(t: *Thread) Thread.Error!void {
     const val = (try t.stack.index(1)).*;
     try t.stack.push(t.vm.dupValue(val));
 }
 
-pub fn f_2over(t: *Thread) EvalError!void {
+pub fn f_2over(t: *Thread) Thread.Error!void {
     const v1 = (try t.stack.index(1)).*;
     const v2 = (try t.stack.index(2)).*;
     try t.stack.push(t.vm.dupValue(v2));
     try t.stack.push(t.vm.dupValue(v1));
 }
 
-pub fn f_pick(t: *Thread) EvalError!void {
+pub fn f_pick(t: *Thread) Thread.Error!void {
     const val = (try t.stack.index(2)).*;
     try t.stack.push(t.vm.dupValue(val));
 }
 
-pub fn f_swap(t: *Thread) EvalError!void {
+pub fn f_swap(t: *Thread) Thread.Error!void {
     var slice = t.stack.data.items;
     if (slice.len < 2) return error.StackUnderflow;
     std.mem.swap(Value, &slice[slice.len - 1], &slice[slice.len - 2]);
 }
 
-pub fn f_rot(t: *Thread) EvalError!void {
+pub fn f_rot(t: *Thread) Thread.Error!void {
     const z = try t.stack.pop();
     const y = try t.stack.pop();
     const x = try t.stack.pop();
@@ -389,7 +480,7 @@ pub fn f_rot(t: *Thread) EvalError!void {
     try t.stack.push(x);
 }
 
-pub fn f_neg_rot(t: *Thread) EvalError!void {
+pub fn f_neg_rot(t: *Thread) Thread.Error!void {
     const z = try t.stack.pop();
     const y = try t.stack.pop();
     const x = try t.stack.pop();
@@ -400,53 +491,13 @@ pub fn f_neg_rot(t: *Thread) EvalError!void {
 
 // combinators ===
 
-pub fn f_dip(t: *Thread) EvalError!void {
+pub fn f_dip(t: *Thread) Thread.Error!void {
     const quot = try t.stack.pop();
     const restore = try t.stack.pop();
     if (quot != .Quotation) return error.TypeError;
     try t.restore_stack.push(restore);
     try t.evaluateValue(quot, 1);
 }
-
-// Copy on Write ===
-
-// pub fn Cow(comptime T: type) type {
-//     return struct {
-//         const Self = @This();
-//
-//         const_data: []const T,
-//         data: ArrayList(T),
-//         owns_data: bool,
-//
-//         pub fn init(allocator: *Allocator, data: []const T) Self {
-//             return .{
-//                 .const_data = data,
-//                 .data = ArrayList(T).init(allocator),
-//                 .owns_data = false,
-//             };
-//         }
-//
-//         pub fn deinit(self: *Self) void {
-//             self.data.deinit();
-//         }
-//
-//         pub fn get(self: Self) []const T {
-//             if (self.owns_data) {
-//                 return self.data.items;
-//             } else {
-//                 return self.const_data;
-//             }
-//         }
-//
-//         pub fn getMut(self: *Self) Allocator.Error![]T {
-//             if (!self.owns_data) {
-//                 try self.data.appendSlice(self.const_data);
-//                 self.owns_data = true;
-//             }
-//             return self.data.items;
-//         }
-//     };
-// }
 
 // Rc ===
 
@@ -485,6 +536,7 @@ pub const ft_string = struct {
     const Self = @This();
 
     pub var ffi_type = FFI_Type{
+        .name = "ffi-string",
         .display_fn = display,
         .dup_fn = dup,
         .drop_fn = drop,
@@ -493,11 +545,6 @@ pub const ft_string = struct {
     pub fn display(t: *Thread, ptr: FFI_Ptr) void {
         const rc = ptr.cast(Rc(ArrayList(u8)));
         std.debug.print("\"{}\"", .{rc.obj.items});
-    }
-
-    // TODO
-    pub fn equals(t: *Thread, ptr1: FFI_Ptr, ptr2: FFI_Ptr) bool {
-        return false;
     }
 
     pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
@@ -515,17 +562,17 @@ pub const ft_string = struct {
 
     //;
 
-    fn makeRcFromLiteral(allocator: *Allocator, literal: []const u8) Allocator.Error!*Rc(ArrayList(u8)) {
+    fn makeRcFromSlice(allocator: *Allocator, slice: []const u8) Allocator.Error!*Rc(ArrayList(u8)) {
         var rc = try allocator.create(Rc(ArrayList(u8)));
         errdefer allocator.destroy(rc);
         rc.* = Rc(ArrayList(u8)).init();
-        rc.obj = try ArrayList(u8).initCapacity(allocator, literal.len);
-        rc.obj.appendSliceAssumeCapacity(literal);
+        rc.obj = try ArrayList(u8).init(allocator);
+        try rc.obj.appendSlice(slice);
 
         return rc;
     }
 
-    pub fn _make(t: *Thread) EvalError!void {
+    pub fn _make(t: *Thread) Thread.Error!void {
         var rc = try t.vm.allocator.create(Rc(ArrayList(u8)));
         errdefer t.vm.allocator.destroy(rc);
         rc.* = Rc(ArrayList(u8)).init();
@@ -534,15 +581,28 @@ pub const ft_string = struct {
         try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
     }
 
-    pub fn _make_from_literal(t: *Thread) EvalError!void {
-        const literal = try t.stack.pop();
-        if (literal != .String) return error.TypeError;
-        var rc = try makeRcFromLiteral(t.vm.allocator, literal.String);
+    pub fn _clone(t: *Thread) Thread.Error!void {
+        const other = try t.stack.pop();
+        switch (other) {
+            .String => |str| {
+                var rc = try makeRcFromSlice(t.vm.allocator, str);
+                try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
+            },
+            .FFI_Ptr => |ptr| {
+                try Self.ffi_type.checkType(ptr);
 
-        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
+                var other_rc = ptr.cast(Rc(ArrayList(u8)));
+                var rc = try makeRcFromSlice(t.vm.allocator, other_rc.obj.items);
+
+                try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
+
+                t.vm.dropValue(other);
+            },
+            else => return error.TypeError,
+        }
     }
 
-    pub fn _append_in_place(t: *Thread) EvalError!void {
+    pub fn _append_in_place(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const other = try t.stack.pop();
         if (other != .String and other != .FFI_Ptr) return error.TypeError;
@@ -551,7 +611,7 @@ pub const ft_string = struct {
         }
 
         const rc = switch (this) {
-            .String => |str| try makeRcFromLiteral(t.vm.allocator, str),
+            .String => |str| try makeRcFromSlice(t.vm.allocator, str),
             .FFI_Ptr => |ptr| blk: {
                 try Self.ffi_type.checkType(ptr);
                 break :blk ptr.cast(Rc(ArrayList(u8)));
@@ -574,7 +634,7 @@ pub const ft_string = struct {
         t.vm.dropValue(other);
     }
 
-    pub fn _to_symbol(t: *Thread) EvalError!void {
+    pub fn _to_symbol(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const str = switch (this) {
             .String => |str| str,
@@ -596,6 +656,7 @@ pub const ft_quotation = struct {
     const Self = @This();
 
     pub var ffi_type = FFI_Type{
+        .name = "ffi-quotation",
         .call_fn = call,
         .display_fn = display,
         .dup_fn = dup,
@@ -635,18 +696,17 @@ pub const ft_quotation = struct {
 
     //;
 
-    fn makeRcFromLiteral(allocator: *Allocator, literal: []const Value) Allocator.Error!*Rc(ArrayList(Value)) {
-        // TODO handle nested quotations
+    fn makeRcFromSlice(allocator: *Allocator, slice: []const Value) Allocator.Error!*Rc(ArrayList(Value)) {
         var rc = try allocator.create(Rc(ArrayList(Value)));
         errdefer allocator.destroy(rc);
         rc.* = Rc(ArrayList(Value)).init();
-        rc.obj = try ArrayList(Value).initCapacity(allocator, literal.len);
-        rc.obj.appendSliceAssumeCapacity(literal);
+        rc.obj = ArrayList(Value).init(allocator);
+        try rc.obj.appendSlice(slice);
 
         return rc;
     }
 
-    pub fn _make(t: *Thread) EvalError!void {
+    pub fn _make(t: *Thread) Thread.Error!void {
         var rc = try t.vm.allocator.create(Rc(ArrayList(Value)));
         errdefer t.vm.allocator.destroy(rc);
         rc.* = Rc(ArrayList(Value)).init();
@@ -655,15 +715,28 @@ pub const ft_quotation = struct {
         try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
     }
 
-    pub fn _make_from_literal(t: *Thread) EvalError!void {
-        const literal = try t.stack.pop();
-        if (literal != .Quotation) return error.TypeError;
-        var rc = try makeRcFromLiteral(t.vm.allocator, literal.Quotation);
+    pub fn _clone(t: *Thread) Thread.Error!void {
+        const other = try t.stack.pop();
+        switch (other) {
+            .Quotation => |q| {
+                var rc = try makeRcFromSlice(t.vm.allocator, q);
+                try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
+            },
+            .FFI_Ptr => |ptr| {
+                try Self.ffi_type.checkType(ptr);
 
-        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
+                var other_rc = ptr.cast(Rc(ArrayList(Value)));
+                var rc = try makeRcFromSlice(t.vm.allocator, other_rc.obj.items);
+
+                try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
+
+                t.vm.dropValue(other);
+            },
+            else => return error.TypeError,
+        }
     }
 
-    pub fn _push(t: *Thread) EvalError!void {
+    pub fn _push(t: *Thread) Thread.Error!void {
         // TODO copy on write
         const ptr = try t.stack.pop();
         const val = try t.stack.pop();
@@ -676,7 +749,24 @@ pub const ft_quotation = struct {
         t.vm.dropValue(ptr);
     }
 
-    pub fn _set(t: *Thread) EvalError!void {
+    pub fn _insert(t: *Thread) Thread.Error!void {
+        // TODO copy on write
+        const ptr = try t.stack.pop();
+        const at = try t.stack.pop();
+        const val = try t.stack.pop();
+        if (ptr != .FFI_Ptr) return error.TypeError;
+        try Self.ffi_type.checkType(ptr.FFI_Ptr);
+        if (at != .Int) return error.TypeError;
+
+        var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
+        try rc.obj.insert(@intCast(usize, at.Int), val);
+
+        t.vm.dropValue(ptr);
+    }
+
+    // TODO append
+
+    pub fn _set(t: *Thread) Thread.Error!void {
         // TODO copy on write
         const ptr = try t.stack.pop();
         const idx = try t.stack.pop();
@@ -691,7 +781,7 @@ pub const ft_quotation = struct {
         t.vm.dropValue(ptr);
     }
 
-    pub fn _get(t: *Thread) EvalError!void {
+    pub fn _get(t: *Thread) Thread.Error!void {
         // TODO get from literal
         const ptr = try t.stack.pop();
         const idx = try t.stack.pop();
@@ -705,7 +795,7 @@ pub const ft_quotation = struct {
         t.vm.dropValue(ptr);
     }
 
-    pub fn _reverse_in_place(t: *Thread) EvalError!void {
+    pub fn _reverse_in_place(t: *Thread) Thread.Error!void {
         const ptr = try t.stack.pop();
         if (ptr != .FFI_Ptr) return error.TypeError;
         try Self.ffi_type.checkType(ptr.FFI_Ptr);
@@ -723,6 +813,7 @@ pub const ft_vec = struct {
     const Self = @This();
 
     pub var ffi_type = FFI_Type{
+        .name = "vec",
         .display_fn = display,
         .dup_fn = dup,
         .drop_fn = drop,
@@ -736,11 +827,6 @@ pub const ft_vec = struct {
             std.debug.print(" ", .{});
         }
         std.debug.print("]", .{});
-    }
-
-    // TODO
-    pub fn equals(t: *Thread, ptr1: FFI_Ptr, ptr2: FFI_Ptr) bool {
-        return false;
     }
 
     pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
@@ -762,7 +848,7 @@ pub const ft_vec = struct {
     //;
 
     // TODO all of these things need to be refactored if i wana reuse them for quotations
-    pub fn _make(t: *Thread) EvalError!void {
+    pub fn _make(t: *Thread) Thread.Error!void {
         var rc = try t.vm.allocator.create(Rc(ArrayList(Value)));
         errdefer t.vm.allocator.destroy(rc);
         rc.* = Rc(ArrayList(Value)).init();
@@ -771,7 +857,7 @@ pub const ft_vec = struct {
         try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
     }
 
-    pub fn _push(t: *Thread) EvalError!void {
+    pub fn _push(t: *Thread) Thread.Error!void {
         const ptr = try t.stack.pop();
         const val = try t.stack.pop();
         if (ptr != .FFI_Ptr) return error.TypeError;
@@ -783,7 +869,7 @@ pub const ft_vec = struct {
         t.vm.dropValue(ptr);
     }
 
-    pub fn _set(t: *Thread) EvalError!void {
+    pub fn _set(t: *Thread) Thread.Error!void {
         const ptr = try t.stack.pop();
         const idx = try t.stack.pop();
         const val = try t.stack.pop();
@@ -797,7 +883,7 @@ pub const ft_vec = struct {
         t.vm.dropValue(ptr);
     }
 
-    pub fn _get(t: *Thread) EvalError!void {
+    pub fn _get(t: *Thread) Thread.Error!void {
         const ptr = try t.stack.pop();
         const idx = try t.stack.pop();
         if (ptr != .FFI_Ptr) return error.TypeError;
@@ -810,7 +896,7 @@ pub const ft_vec = struct {
         t.vm.dropValue(ptr);
     }
 
-    pub fn _len(t: *Thread) EvalError!void {
+    pub fn _len(t: *Thread) Thread.Error!void {
         const ptr = try t.stack.pop();
         if (ptr != .FFI_Ptr) return error.TypeError;
         try Self.ffi_type.checkType(ptr.FFI_Ptr);
@@ -821,7 +907,7 @@ pub const ft_vec = struct {
         t.vm.dropValue(ptr);
     }
 
-    pub fn _map_in_place(t: *Thread) EvalError!void {
+    pub fn _map_in_place(t: *Thread) Thread.Error!void {
         //         const ptr = try vm.stack.pop();
         //         if (ptr != .FFI_Ptr) return error.TypeError;
         //         try Self.ffi_type.checkType(ptr.FFI_Ptr);
@@ -832,7 +918,7 @@ pub const ft_vec = struct {
         //         vm.dropValue(ptr);
     }
 
-    pub fn _reverse_in_place(t: *Thread) EvalError!void {
+    pub fn _reverse_in_place(t: *Thread) Thread.Error!void {
         const ptr = try t.stack.pop();
         if (ptr != .FFI_Ptr) return error.TypeError;
         try Self.ffi_type.checkType(ptr.FFI_Ptr);
@@ -886,7 +972,7 @@ pub const ft_proto = struct {
     //
     //     //;
     //
-    //     pub fn _make(vm: *VM) EvalError!void {
+    //     pub fn _make(vm: *VM) Thread.Error!void {
     //         var map = try vm.allocator.create(Map);
     //         errdefer vm.allocator.destroy(map);
     //         map.* = Map.init(vm.allocator);
@@ -898,7 +984,7 @@ pub const ft_proto = struct {
     //         try vm.stack.push(.{ .Ref = rc.ref() });
     //     }
     //
-    //     pub fn _set(vm: *VM) EvalError!void {
+    //     pub fn _set(vm: *VM) Thread.Error!void {
     //         const ref = try vm.stack.pop();
     //         const sym = try vm.stack.pop();
     //         const value = try vm.stack.pop();
@@ -913,7 +999,7 @@ pub const ft_proto = struct {
     //         try map.put(sym.Symbol, value);
     //     }
     //
-    //     pub fn _get(vm: *VM) EvalError!void {
+    //     pub fn _get(vm: *VM) Thread.Error!void {
     //         const ref = try vm.stack.pop();
     //         const sym = try vm.stack.pop();
     //         try Self.ft.checkType(ref);
@@ -969,8 +1055,28 @@ pub const builtins = [_]struct {
     },
 
     .{
+        .name = "type-of",
+        .func = f_type_of,
+    },
+    .{
+        .name = "ffi-type-of",
+        .func = f_ffi_type_of,
+    },
+    .{
+        .name = "word>symbol",
+        .func = f_word_to_symbol,
+    },
+    .{
         .name = "symbol>word",
         .func = f_symbol_to_word,
+    },
+    .{
+        .name = "string>symbol",
+        .func = f_string_to_symbol,
+    },
+    .{
+        .name = "symbol>string",
+        .func = f_symbol_to_string,
     },
 
     .{
@@ -1027,6 +1133,10 @@ pub const builtins = [_]struct {
         .func = f_equal,
     },
     .{
+        .name = "eqv?",
+        .func = f_equivalent,
+    },
+    .{
         .name = "not",
         .func = f_not,
     },
@@ -1059,6 +1169,14 @@ pub const builtins = [_]struct {
     .{
         .name = "dup",
         .func = f_dup,
+    },
+    .{
+        .name = "2dup",
+        .func = f_2dup,
+    },
+    .{
+        .name = "3dup",
+        .func = f_3dup,
     },
     .{
         .name = "over",
@@ -1095,8 +1213,8 @@ pub const builtins = [_]struct {
         .func = ft_string._make,
     },
     .{
-        .name = "<string>,literal",
-        .func = ft_string._make_from_literal,
+        .name = "<string>,clone",
+        .func = ft_string._clone,
     },
     .{
         .name = "string-append",
@@ -1112,12 +1230,16 @@ pub const builtins = [_]struct {
         .func = ft_quotation._make,
     },
     .{
-        .name = "<quotation>,literal",
-        .func = ft_quotation._make_from_literal,
+        .name = "<quotation>,clone",
+        .func = ft_quotation._clone,
     },
     .{
         .name = "qpush!",
         .func = ft_quotation._push,
+    },
+    .{
+        .name = "qinsert!",
+        .func = ft_quotation._insert,
     },
     .{
         .name = "qget",

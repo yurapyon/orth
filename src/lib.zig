@@ -6,13 +6,16 @@ const ArrayList = std.ArrayList;
 
 // stack 0 is top
 
-// records are vectors
-//   u wont get the same level of type checking
-//   but if you can generate symbols and quotations at runtime
-//     records can easily be made
-
 // display is human readable
 // write is machine readable
+
+// once you parse something to values
+//   you can get rid of the original text string
+// values returned from parse should stay around
+//   for the life of the thread thats running them
+//   the thread doesnt copy values in order to run them
+
+//;
 
 // envs
 //  do it c style
@@ -21,61 +24,66 @@ const ArrayList = std.ArrayList;
 //  vm word_table is the global lookup table for all words in the session
 
 // unicode is currently not supported but i would like to have it in the future
+//   shouldnt be hard
+//     unicode chars
+//     string_indent need to be updated
+
+// records are vectors
+//   u wont get the same level of type checking
+//   but if you can generate symbols and quotations at runtime
+//     records can easily be made
 
 // TODO need
-// think abt how string escaping is done
-// zig errors
-//   put in 'catch unreachable' on stack pops/indexes that cant fail
 // error reporting
+//   use error_info
 //   stack trace thing
 //   parse with column number/word number somehow
 //     use line_num in eval code
-// ffi threads
-//   yeild and resume
-//   cooperative multithreading built into vm ?
-// organize tokenizer/parser api
-//   i like having them separate
-//     should tokenizer allocate for strings becuase it needs to modify them
-//   i dont really want parser to produce errors on 'invalid symbol' or 'invalid string' etc
-
-// TODO want
-// maybe make 'and' and 'or' work like lua ?
-//   are values besides #t and #f able to work in places where booleans are accepted
-//   usually this is because everything is nullable, but i dont really want that in orth
-// memory management
-//   currently values returned from parser need to stay around while vm is evaluating
-//     would be nice if this wasnt the case ?
-//     quotations values are self referential to the list of values
-//       would be nice if they werent but this makes it so quotations literals only encode a length
-// parser
-//   strings
-//     multiline strings
-//       could do them like zig
-//   multiline comments?
-//     could use ( )
-
-// TODO QOL
+// should vecs be callable
+//   having quoations as a separate type is kindof annoying
 // better int parser
 //   hex ints
 // better float parser
 //   allow syntax like 1234f
+
+// TODO want
 // certain things cant be symbols
 //   because symbols are what you use to name functions and stuff
+//   wait for better float and int parser
+//   symbols can't have spaces
+//     what about string>symbol ?
+// ffi threads
+//   cooperative multithreading built into vm ?
+//     yeild and resume
+// parser
+//   multiline comments?
+//     could use ( )
+// some type of define-struct thing, writen w orth
+
+// TODO QOL
+// maybe make 'and' and 'or' work like lua ?
+//   are values besides #t and #f able to work in places where booleans are accepted
+//   usually this is because everything is nullable, but i dont really want that in orth
 // vm should have log/print functions or something
 //     so u can control where vm messages get printed
 //     integrate this into nicePrint functions
 //   if nice print is supposed to return strings then idk
 //   nicePrint fns take a zig Writer
+// zig errors
+//   put in 'catch unreachable' on stack pops/indexes that cant fail
+//     lib is checked, builtins should be checked
+//     if you pop off the stack and instantly push something else, you wont have memory errors
+//     its probably not even worth it to do this
+// parser
+//   could do multiline strings like zig
 
-// errors ===
+//;
 
 pub const StackError = error{
     StackOverflow,
     StackUnderflow,
     OutOfBounds,
 } || Allocator.Error;
-
-//;
 
 pub fn Stack(comptime T: type) type {
     return struct {
@@ -158,6 +166,7 @@ pub const StringFixer = struct {
     }
 
     // TODO unicode
+    // escapes like \#space , which use char escaper
     pub fn parseStringEscape(ch: u8) Error!u8 {
         return switch (ch) {
             'n' => '\n',
@@ -212,16 +221,6 @@ pub const StringFixer = struct {
 
 //;
 
-// tokenizer shouldnt have any errors(besides string unfinished at eof)
-//   or it should have all the errors for wether words/escapes are valid or not
-
-// TODO tokenizer should return string errors
-// maybe tokenize should copy the strings?
-// next() can take an allocator for strings
-// vm has a tokenizer
-// parse takes a []const u8
-// and returns a []Value
-
 pub const Token = struct {
     pub const Data = union(enum) {
         String: struct {
@@ -247,6 +246,7 @@ pub const Tokenizer = struct {
         InvalidWord,
     };
 
+    // TODO use this correctly
     pub const ErrorInfo = struct {
         line_number: usize,
     };
@@ -304,6 +304,7 @@ pub const Tokenizer = struct {
         if (str.len == 1) {
             return str[0];
         } else {
+            // TODO star, heart
             if (std.mem.eql(u8, str, "space")) {
                 return '\n';
             } else if (std.mem.eql(u8, str, "tab")) {
@@ -415,22 +416,42 @@ pub const Tokenizer = struct {
             }
         } else if (self.end_char == self.buf.len) {
             switch (self.state) {
-                .Empty => return null,
-                .InComment => {},
+                .Empty,
+                .InComment,
+                => {
+                    return null;
+                },
                 .InString => {
                     self.error_info.line_number = self.line_at - 1;
                     return error.UnfinishedString;
+                },
+                .MaybeInEscape => return error.InvalidCharEscape,
+                .InEscape => {
+                    self.state = .Empty;
+                    return Token{
+                        .data = .{
+                            .CharEscape = try parseCharEscape(
+                                self.buf[(self.start_char + 2)..self.end_char],
+                            ),
+                        },
+                    };
+                },
+                .InSymbol => {
+                    self.state = .Empty;
+                    const name = self.buf[(self.start_char + 1)..self.end_char];
+                    if (name.len == 0) return error.InvalidSymbol;
+                    return Token{
+                        .data = .{ .Symbol = name },
+                    };
                 },
                 .InWord => {
                     self.state = .Empty;
                     return Token{
                         .data = .{
-                            .Word = self.buf[self.start_char..(self.end_char - 1)],
+                            .Word = self.buf[self.start_char..self.end_char],
                         },
                     };
                 },
-                // TODO
-                else => {},
             }
         }
 
@@ -464,7 +485,6 @@ pub const Value = union(enum) {
     Int: i64,
     Float: f64,
     Char: u8,
-    // TODO unicode
     Boolean: bool,
     Sentinel,
     String: []const u8,
@@ -480,24 +500,25 @@ pub const Value = union(enum) {
 pub const FFI_Type = struct {
     const Self = @This();
 
-    type_id: usize = undefined,
-
+    name: []const u8 = "ffi",
     call_fn: ?fn (*Thread, FFI_Ptr) []const Value = null,
     display_fn: fn (*Thread, FFI_Ptr) void = defaultDisplay,
-    // TODO this could be *Thread, FFI_Ptr, Value
-    equals_fn: fn (*Thread, FFI_Ptr, FFI_Ptr) bool = defaultEquals,
+    equivalent_fn: fn (*Thread, FFI_Ptr, Value) bool = defaultEquivalent,
     dup_fn: fn (*VM, FFI_Ptr) FFI_Ptr = defaultDup,
     drop_fn: fn (*VM, FFI_Ptr) void = defaultDrop,
 
+    name_id: usize = undefined,
+    type_id: usize = undefined,
+
     fn defaultDisplay(t: *Thread, ptr: FFI_Ptr) void {
         std.debug.print("*<{} {}>", .{
-            ptr.type_id,
+            t.vm.type_table[ptr.type_id].name,
             ptr.ptr,
         });
     }
 
-    fn defaultEquals(t: *Thread, ptr1: FFI_Ptr, ptr2: FFI_Ptr) bool {
-        return ptr1.type_id == ptr2.type_id and ptr1.ptr == ptr2.ptr;
+    fn defaultEquivalent(t: *Thread, ptr: FFI_Ptr, val: Value) bool {
+        return false;
     }
 
     fn defaultDup(t: *VM, ptr: FFI_Ptr) FFI_Ptr {
@@ -532,6 +553,22 @@ pub const ReturnValue = struct {
 pub const VM = struct {
     const Self = @This();
 
+    pub const BuiltInIds = enum {
+        QuoteOpen,
+        QuoteClose,
+        Int,
+        Float,
+        Char,
+        Boolean,
+        Sentinel,
+        String,
+        Word,
+        Symbol,
+        Quotation,
+        FFI_Fn,
+        FFI_Ptr,
+    };
+
     pub const ErrorInfo = struct {
         word_not_found: []const u8,
     };
@@ -543,13 +580,7 @@ pub const VM = struct {
     word_table: ArrayList(?Value),
     type_table: ArrayList(*const FFI_Type),
 
-    quote_open_id: usize,
-    quote_close_id: usize,
-
-    // TODO
-    // string_literals: ArrayList([]const u8),
-    // how to do this?
-    // quotation_literals: ArrayList([]const Value),
+    string_literals: ArrayList([]const u8),
 
     pub fn init(allocator: *Allocator) Allocator.Error!Self {
         var ret = Self{
@@ -560,11 +591,21 @@ pub const VM = struct {
             .word_table = ArrayList(?Value).init(allocator),
             .type_table = ArrayList(*const FFI_Type).init(allocator),
 
-            .quote_open_id = undefined,
-            .quote_close_id = undefined,
+            .string_literals = ArrayList([]const u8).init(allocator),
         };
-        ret.quote_open_id = try ret.internSymbol("{");
-        ret.quote_close_id = try ret.internSymbol("}");
+        std.debug.assert(@enumToInt(BuiltInIds.QuoteOpen) == try ret.internSymbol("{"));
+        std.debug.assert(@enumToInt(BuiltInIds.QuoteClose) == try ret.internSymbol("}"));
+        std.debug.assert(@enumToInt(BuiltInIds.Int) == try ret.internSymbol("int"));
+        std.debug.assert(@enumToInt(BuiltInIds.Float) == try ret.internSymbol("float"));
+        std.debug.assert(@enumToInt(BuiltInIds.Char) == try ret.internSymbol("char"));
+        std.debug.assert(@enumToInt(BuiltInIds.Boolean) == try ret.internSymbol("boolean"));
+        std.debug.assert(@enumToInt(BuiltInIds.Sentinel) == try ret.internSymbol("sentinel"));
+        std.debug.assert(@enumToInt(BuiltInIds.String) == try ret.internSymbol("string"));
+        std.debug.assert(@enumToInt(BuiltInIds.Word) == try ret.internSymbol("word"));
+        std.debug.assert(@enumToInt(BuiltInIds.Symbol) == try ret.internSymbol("symbol"));
+        std.debug.assert(@enumToInt(BuiltInIds.Quotation) == try ret.internSymbol("quotation"));
+        std.debug.assert(@enumToInt(BuiltInIds.FFI_Fn) == try ret.internSymbol("ffi-fn"));
+        std.debug.assert(@enumToInt(BuiltInIds.FFI_Ptr) == try ret.internSymbol("ffi-ptr"));
         return ret;
     }
 
@@ -575,6 +616,10 @@ pub const VM = struct {
             }
         }
 
+        for (self.string_literals.items) |str| {
+            self.allocator.free(str);
+        }
+        self.string_literals.deinit();
         self.type_table.deinit();
         self.word_table.deinit();
         for (self.symbol_table.items) |sym| {
@@ -583,7 +628,7 @@ pub const VM = struct {
         self.symbol_table.deinit();
     }
 
-    //;
+    // parse ===
 
     pub fn internSymbol(self: *Self, str: []const u8) Allocator.Error!usize {
         for (self.symbol_table.items) |st_str, i| {
@@ -607,13 +652,15 @@ pub const VM = struct {
                     ct += 1;
                 }
 
-                var buf = try self.allocator.alloc(u8, ct);
+                const buf = try self.allocator.alloc(u8, ct);
                 fixer.reset();
                 ct = 0;
                 while (fixer.next() catch unreachable) |ch| {
                     buf[ct] = ch;
                     ct += 1;
                 }
+
+                try self.string_literals.append(buf);
 
                 return Value{ .String = buf };
             },
@@ -643,17 +690,6 @@ pub const VM = struct {
 
     // eval ===
 
-    pub fn installFFI_Type(self: *Self, ty: *FFI_Type) Allocator.Error!void {
-        const idx = self.type_table.items.len;
-        ty.type_id = idx;
-        try self.type_table.append(ty);
-    }
-
-    pub fn defineWord(self: *Self, name: []const u8, value: Value) Allocator.Error!void {
-        const idx = try self.internSymbol(name);
-        self.word_table.items[idx] = value;
-    }
-
     pub fn dupValue(self: *Self, val: Value) Value {
         switch (val) {
             .FFI_Ptr => |ptr| return .{
@@ -668,6 +704,20 @@ pub const VM = struct {
             const ptr = val.FFI_Ptr;
             self.type_table.items[ptr.type_id].drop_fn(self, ptr);
         }
+    }
+
+    //;
+
+    pub fn installFFI_Type(self: *Self, ty: *FFI_Type) Allocator.Error!void {
+        const idx = self.type_table.items.len;
+        ty.type_id = idx;
+        ty.name_id = try self.internSymbol(ty.name);
+        try self.type_table.append(ty);
+    }
+
+    pub fn defineWord(self: *Self, name: []const u8, value: Value) Allocator.Error!void {
+        const idx = try self.internSymbol(name);
+        self.word_table.items[idx] = value;
     }
 };
 
@@ -684,13 +734,13 @@ pub const Thread = struct {
         InternalError,
     } || StackError || Allocator.Error;
 
+    // TODO use this
     pub const ErrorInfo = struct {
         line_number: usize,
         word_not_found: []const u8,
     };
 
     vm: *VM,
-    // TODO maybe get rid of this
     error_info: ErrorInfo,
 
     current_execution: []const Value,
@@ -807,9 +857,10 @@ pub const Thread = struct {
 
             switch (value) {
                 .Word => |idx| {
-                    if (idx == self.vm.quote_open_id) {
-                        try self.q_stack.push(.{ .Quotation = self.current_execution[0..] });
-                    } else if (idx == self.vm.quote_close_id) {
+                    if (idx == @enumToInt(VM.BuiltInIds.QuoteOpen)) {
+                        try self.q_stack.push(.{ .Quotation = self.current_execution });
+                    } else if (idx == @enumToInt(VM.BuiltInIds.QuoteClose)) {
+                        // TODO if this pop doesnt work, return error.QuotationStackUnderflow
                         var q = try self.q_stack.pop();
                         if (self.q_stack.data.items.len == 0) {
                             q.Quotation.len -= self.current_execution.len + 1;

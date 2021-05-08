@@ -3,12 +3,6 @@
 
 ; =====
 
-{ dup dup
-} :2dup @
-
-{ dup dup dup
-} :3dup @
-
 { drop drop
 } :2drop @
 
@@ -99,7 +93,21 @@
 ; if* when* unless* ?if
 ; cond case
 
-; =====
+; types ==
+
+{ type-of :int eq? } :int? @
+{ type-of :float eq? } :float? @
+{ type-of :char eq? } :char? @
+{ type-of :boolean eq? } :boolean? @
+{ type-of :sentinel eq? } :sentinel? @
+{ type-of :string eq? } :string? @
+{ type-of :word eq? } :word? @
+{ type-of :symbol eq? } :symbol? @
+{ type-of :quotation eq? } :quotation? @
+{ type-of :ffi-fn eq? } :ffi-fn? @
+{ type-of :ffi-ptr eq? } :ffi-ptr? @
+
+; math ==
 
 { swap < } :> @
 { > not } :<= @
@@ -130,6 +138,15 @@ swap mod +
 { { } { "panic" . panic } if
 } :unwrap @
 
+; quotations ===
+
+{ 0 swap qinsert!
+} :qpush-front! @
+
+{ <quotation>,clone
+  { qpush-front! } keep
+} :curry @
+
 ; =====
 
 { vlen 0 swap
@@ -137,9 +154,6 @@ swap mod +
 
 { mget* drop
 } :mget @
-
-{ ; TODO
-} :curry @
 
 ; =====
 

@@ -5,25 +5,26 @@
 ; { cell
 ; } define-struct
 
+; [ :cell
+;   :char mut
+;   :lock immut
+; ]vec vec>struct :cell @struct
+
 ; [ 1 2 3 ]vec
 ; { 2 3 + }
-
-:symbol>word ref :/ @
-
-"wow"
-.stack
-;"wow\\"
-
-{
-[ 1 2 :+ / ]q :q @
-q .stack drop
-3    :q ref qpush!
-:+ / :q ref qpush!
-q .stack drop
-
-:q ref
-.stack
-}
+; :symbol>word ref :/ @
+; "wow"
+; .stack
+; {
+; [ 1 2 :+ / ]q :q @
+; q .stack drop
+; 3    :q ref qpush!
+; :+ / :q ref qpush!
+; q .stack drop
+; 
+; :q ref
+; .stack
+; } eval
 ; q .stack drop
 ; 5 0 :q ref qset!
 ; q .stack drop
@@ -38,4 +39,10 @@ q .stack drop
 ; .stack
 ; { cell-char } { cell-lock } bi
 ; .stack 2drop
+
+
+ { { eq? } { eqv? } 2bi
+ } :check @
+
+ { "asdf" 1 2 } <quotation>,clone ffi-type-of .
 
