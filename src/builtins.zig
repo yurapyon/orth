@@ -22,8 +22,8 @@ usingnamespace lib;
 //       something more like 'each' makes more sense
 //         would be cool if i could temporarily use the vec as a stack
 //   printing functions
-//     display
 //     write
+//       need to translate '\n' in strings to a "\n"
 //   math stuff
 //     handle integer overflow
 //   more string manipulation
@@ -63,12 +63,44 @@ pub fn f_define(t: *Thread) Thread.Error!void {
     if (name != .Symbol) return error.TypeError;
 
     if (t.vm.word_table.items[name.Symbol]) |prev| {
-        // TODO notify of overwrite
+        // TODO handle overwrite
         //  need to handle deleteing the value youre replacing
-        t.vm.word_table.items[name.Symbol] = value;
     } else {
         t.vm.word_table.items[name.Symbol] = value;
     }
+}
+
+pub fn f_set_doc(t: *Thread) Thread.Error!void {
+    const val = try t.stack.pop();
+    const doc_string = try t.stack.pop();
+    if (val != .Word and val != .Symbol) return error.TypeError;
+    // TODO have it so it doesnt have to be a literal string
+    if (doc_string != .String) return error.TypeError;
+
+    const id = switch (val) {
+        .Word => |word| word,
+        .Symbol => |sym| sym,
+        else => unreachable,
+    };
+
+    if (t.vm.docs_table.items[id]) |prev| {
+        // TODO handle overwrite
+    } else {
+        t.vm.docs_table.items[id] = try t.vm.allocator.dupe(u8, doc_string.String);
+    }
+}
+pub fn f_get_doc(t: *Thread) Thread.Error!void {
+    const val = try t.stack.pop();
+    if (val != .Word and val != .Symbol) return error.TypeError;
+
+    const id = switch (val) {
+        .Word => |word| word,
+        .Symbol => |sym| sym,
+        else => unreachable,
+    };
+
+    // TODO docs not found error
+    try t.stack.push(.{ .String = t.vm.docs_table.items[id].? });
 }
 
 pub fn f_ref(t: *Thread) Thread.Error!void {
@@ -106,6 +138,66 @@ pub fn f_print_stack(t: *Thread) Thread.Error!void {
         std.debug.print("  {}| ", .{t.stack.data.items.len - i - 1});
         t.nicePrintValue(it);
         std.debug.print("\n", .{});
+    }
+}
+
+// display/write ===
+
+fn displayValue(t: *Thread, value: Value) void {
+    switch (value) {
+        .Int => |val| std.debug.print("{}", .{val}),
+        .Float => |val| std.debug.print("{d}f", .{val}),
+        .Char => |val| switch (val) {
+            '\n' => std.debug.print("#\\space", .{}),
+            '\t' => std.debug.print("#\\tab", .{}),
+            else => std.debug.print("#\\{c}", .{val}),
+        },
+        .Boolean => |val| {
+            const str = if (val) "#t" else "#f";
+            std.debug.print("{s}", .{str});
+        },
+        .Sentinel => std.debug.print("#sentinel", .{}),
+        .Symbol => |val| std.debug.print(":{}", .{t.vm.symbol_table.items[val]}),
+        .Word => |val| std.debug.print("{}", .{t.vm.symbol_table.items[val]}),
+        .String => |val| std.debug.print("{}", .{val}),
+        .Quotation => |q| {
+            std.debug.print("{{ ", .{});
+            for (q) |val| {
+                displayValue(t, val);
+                std.debug.print(" ", .{});
+            }
+            std.debug.print("}}", .{});
+        },
+        .FFI_Fn => |val| std.debug.print("fn({})", .{t.vm.symbol_table.items[val.name]}),
+        .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].display_fn(t, ptr),
+    }
+}
+
+pub fn f_display(t: *Thread) Thread.Error!void {
+    displayValue(t, try t.stack.pop());
+}
+
+// repl ==
+
+pub fn f_read(t: *Thread) Thread.Error!void {
+    const stdin = std.io.getStdIn();
+    // TODO report errors better
+    const str: ?[]u8 = stdin.reader().readUntilDelimiterAlloc(t.vm.allocator, '\n', 2048) catch null;
+    if (str) |s| {
+        try t.vm.string_literals.append(s);
+        try t.stack.push(.{ .String = s });
+    }
+}
+
+pub fn f_parse(t: *Thread) Thread.Error!void {
+    const str = try t.stack.pop();
+    if (str != .String) return error.TypeError;
+
+    var tokens = Tokenizer.init(str.String);
+
+    while (tokens.next() catch unreachable) |tok| {
+        // TODO i dont think this is right but idk
+        try t.evaluateValue(t.vm.parse(tok) catch unreachable, 0);
     }
 }
 
@@ -491,6 +583,7 @@ pub fn f_neg_rot(t: *Thread) Thread.Error!void {
 
 // combinators ===
 
+// TODO quot doesnt have to be a quotation
 pub fn f_dip(t: *Thread) Thread.Error!void {
     const quot = try t.stack.pop();
     const restore = try t.stack.pop();
@@ -566,7 +659,7 @@ pub const ft_string = struct {
         var rc = try allocator.create(Rc(ArrayList(u8)));
         errdefer allocator.destroy(rc);
         rc.* = Rc(ArrayList(u8)).init();
-        rc.obj = try ArrayList(u8).init(allocator);
+        rc.obj = ArrayList(u8).init(allocator);
         try rc.obj.appendSlice(slice);
 
         return rc;
@@ -1034,6 +1127,14 @@ pub const builtins = [_]struct {
         .func = f_define,
     },
     .{
+        .name = "doc!",
+        .func = f_set_doc,
+    },
+    .{
+        .name = "doc",
+        .func = f_get_doc,
+    },
+    .{
         .name = "ref",
         .func = f_ref,
     },
@@ -1052,6 +1153,20 @@ pub const builtins = [_]struct {
     .{
         .name = ".stack",
         .func = f_print_stack,
+    },
+
+    .{
+        .name = "display",
+        .func = f_display,
+    },
+
+    .{
+        .name = "read",
+        .func = f_read,
+    },
+    .{
+        .name = "parse",
+        .func = f_parse,
     },
 
     .{

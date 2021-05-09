@@ -40,9 +40,10 @@
 ; { cell-char } { cell-lock } bi
 ; .stack 2drop
 
+newline
+:@doc .doc
+:newline .doc
+newline
 
- { { eq? } { eqv? } 2bi
- } :check @
-
- { "asdf" 1 2 } <quotation>,clone ffi-type-of .
-
+{ read parse rp } :rp @
+rp

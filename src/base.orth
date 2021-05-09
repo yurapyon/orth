@@ -1,60 +1,123 @@
+; todo add more documentation
+
+{ over doc! @
+} :@doc @
+
+"( value symbol doc-string -- )\ndefine with a doc string" :@doc doc!
+
+{ { symbol>string display } keep
+  ": " display
+  ; todo ref display should be ref write
+  { ref display } keep newline
+  doc display newline
+} :.doc
+"( -- )\nprint documentation"
+@doc
+
 { ref eval
-} :exec @
+} :exec
+"( symbol -- )\nevaluate a symbol"
+@doc
 
 ; =====
+
+{ "\n" display
+} :newline
+"( -- )\ndisplay a newline"
+@doc
+
+; =====
+
+"( x -- )\npop a value off the stack" :drop doc!
 
 { drop drop
-} :2drop @
+} :2drop
+"( x y -- )\npop two values off the stack"
+@doc
 
 { drop drop drop
-} :3drop @
+} :3drop
+"( x y z -- )\npop three values off the stack"
+@doc
 
 { { drop } dip
-} :nip @
+} :nip
+"( x y z -- x z )\nremove the second from the top value from the stack"
+@doc
 
 { { 2drop } dip
-} :2nip @
+} :2nip
+"( x y z -- x z )\nremove the second and third from the top values from the stack"
+@doc
 
 ; =====
 
+"( x q -- x )\nremove x from the stack. eval q. then restore x to the stack" :dip doc!
+
 { swap { dip } dip
-} :2dip @
+} :2dip
+"( x y q -- x y )\nremove x and y from the stack. eval q. then restore x and y to the stack"
+@doc
 
 { swap { 2dip } dip
-} :3dip @
+} :3dip
+"( x y z q -- x y z )\nremove x, y, and z from the stack. eval q. then restore x, y, and z to the stack"
+@doc
 
 { swap { 3dip } dip
-} :4dip @
+} :4dip
+"( w x y z q -- w x y z )\nremove w, x, y, and z from the stack. eval q. then restore w, x, y, and z to the stack"
+@doc
 
 { over { eval } dip
-} :keep @
+} :keep
+"( x q -- x )\napply q to x. then restore x to the stack"
+@doc
 
 { { 2dup } dip 2dip
-} :2keep @
+} :2keep
+"( x y q -- x y )\napply q to x and y. then restore x and y to the stack"
+@doc
 
 { { 3dup } dip 3dip
-} :3keep @
+} :3keep
+"( x y z q -- x y z )\napply q to x, y, and z. then restore x, y, and z to the stack"
+@doc
 
 { { keep } dip eval
-} :bi @
+} :bi
+"( x p q -- )\napply p to x. then apply q to x"
+@doc
 
 { { 2keep } dip eval
-} :2bi @
+} :2bi
+"( x y p q -- )\napply p to x and y. then apply q to x and y"
+@doc
 
 { { 3keep } dip eval
-} :3bi @
+} :3bi
+"( x y z p q -- )\napply p to x, y and z. then apply q to x, y, and z"
+@doc
 
 { { { keep } dip keep } dip eval
-} :tri @
+} :tri
+"( x p q r -- )\napply p to x. then apply q to x. then apply r to x"
+@doc
 
 { { { 2keep } dip 2keep } dip eval
-} :2tri @
+} :2tri
+"( x y p q r -- )\napply p to x and y. then apply q to x and y. then apply r to x and y"
+@doc
 
 { { { 3keep } dip 3keep } dip eval
-} :3tri @
+} :3tri
+"( x y z p q r -- )\napply p to x, y, and z. then apply q to x, y, and z. then apply r to x, y, and z"
+@doc
 
 { { dip } dip eval
-} :bi* @
+} :bi*
+"( x y p q -- )\napply p to x. then apply q to y"
+@doc
 
 { { 2dip } dip eval
 } :2bi* @

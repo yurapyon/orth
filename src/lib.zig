@@ -34,6 +34,9 @@ const ArrayList = std.ArrayList;
 //     records can easily be made
 
 // TODO need
+// repl
+//   load and read files
+//   probably use a scheduler thing
 // error reporting
 //   use error_info
 //   stack trace thing
@@ -45,6 +48,7 @@ const ArrayList = std.ArrayList;
 //   hex ints
 // better float parser
 //   allow syntax like 1234f
+// index stack at n to drop or dup
 
 // TODO want
 // certain things cant be symbols
@@ -578,6 +582,7 @@ pub const VM = struct {
 
     symbol_table: ArrayList([]const u8),
     word_table: ArrayList(?Value),
+    docs_table: ArrayList(?[]const u8),
     type_table: ArrayList(*const FFI_Type),
 
     string_literals: ArrayList([]const u8),
@@ -589,6 +594,7 @@ pub const VM = struct {
 
             .symbol_table = ArrayList([]const u8).init(allocator),
             .word_table = ArrayList(?Value).init(allocator),
+            .docs_table = ArrayList(?[]const u8).init(allocator),
             .type_table = ArrayList(*const FFI_Type).init(allocator),
 
             .string_literals = ArrayList([]const u8).init(allocator),
@@ -620,6 +626,12 @@ pub const VM = struct {
             self.allocator.free(str);
         }
         self.string_literals.deinit();
+        for (self.docs_table.items) |maybe_doc| {
+            if (maybe_doc) |doc| {
+                self.allocator.free(doc);
+            }
+        }
+        self.docs_table.deinit();
         self.type_table.deinit();
         self.word_table.deinit();
         for (self.symbol_table.items) |sym| {
@@ -640,6 +652,7 @@ pub const VM = struct {
         const idx = self.symbol_table.items.len;
         try self.symbol_table.append(try self.allocator.dupe(u8, str));
         try self.word_table.append(null);
+        try self.docs_table.append(null);
         return idx;
     }
 
@@ -715,9 +728,11 @@ pub const VM = struct {
         try self.type_table.append(ty);
     }
 
-    pub fn defineWord(self: *Self, name: []const u8, value: Value) Allocator.Error!void {
+    pub fn defineWord(self: *Self, name: []const u8, value: Value, doc_string: ?[]const u8) Allocator.Error!void {
         const idx = try self.internSymbol(name);
+        // TODO dup value here?
         self.word_table.items[idx] = value;
+        self.docs_table.items[idx] = if (doc_string) |str| try self.allocator.dupe(u8, str) else null;
     }
 };
 
@@ -817,6 +832,7 @@ pub const Thread = struct {
 
     //;
 
+    // TODO refactor this and the next fn so the repl can use it
     pub fn evaluateValue(self: *Self, val: Value, restore_ct: usize) Error!void {
         switch (val) {
             .Quotation => |q| {

@@ -16,9 +16,9 @@ pub fn something(allocator: *Allocator) !void {
     var vm = try lib.VM.init(allocator);
     defer vm.deinit();
 
-    try vm.defineWord("#t", .{ .Boolean = true });
-    try vm.defineWord("#f", .{ .Boolean = false });
-    try vm.defineWord("#sentinel", .{ .Sentinel = {} });
+    try vm.defineWord("#t", .{ .Boolean = true }, "boolean true");
+    try vm.defineWord("#f", .{ .Boolean = false }, "boolean false");
+    try vm.defineWord("#sentinel", .{ .Sentinel = {} }, "sentinel");
 
     for (builtins.builtins) |bi| {
         const idx = try vm.internSymbol(bi.name);
