@@ -11,9 +11,15 @@ const ArrayList = std.ArrayList;
 
 // once you parse something to values
 //   you can get rid of the original text string
-// values returned from parse should stay around
-//   for the life of the thread thats running them
-//   the thread doesnt copy values in order to run them
+//   the vm deep copies strings
+// values returned from parse
+//   dont need to stay around for the live of the vm
+//   the vm deep copies quotations
+
+// tokenizer syntax: " #\ :
+//    parser syntax: { } float int
+// i think thats all you need,
+//   as in fancy 'defining syntax at runtime' like forth isnt neccessary
 
 //;
 
@@ -558,8 +564,6 @@ pub const VM = struct {
     const Self = @This();
 
     pub const BuiltInIds = enum {
-        QuoteOpen,
-        QuoteClose,
         Int,
         Float,
         Char,
@@ -586,6 +590,10 @@ pub const VM = struct {
     type_table: ArrayList(*const FFI_Type),
 
     string_literals: ArrayList([]const u8),
+    // note: this coud be a Stack([]const Value)
+    //   but there is a zig bug
+    //   just going to use a Value that will always be a Value.Quotation
+    quotation_literals: ArrayList(Value),
 
     pub fn init(allocator: *Allocator) Allocator.Error!Self {
         var ret = Self{
@@ -598,9 +606,8 @@ pub const VM = struct {
             .type_table = ArrayList(*const FFI_Type).init(allocator),
 
             .string_literals = ArrayList([]const u8).init(allocator),
+            .quotation_literals = ArrayList(Value).init(allocator),
         };
-        std.debug.assert(@enumToInt(BuiltInIds.QuoteOpen) == try ret.internSymbol("{"));
-        std.debug.assert(@enumToInt(BuiltInIds.QuoteClose) == try ret.internSymbol("}"));
         std.debug.assert(@enumToInt(BuiltInIds.Int) == try ret.internSymbol("int"));
         std.debug.assert(@enumToInt(BuiltInIds.Float) == try ret.internSymbol("float"));
         std.debug.assert(@enumToInt(BuiltInIds.Char) == try ret.internSymbol("char"));
@@ -622,6 +629,10 @@ pub const VM = struct {
             }
         }
 
+        for (self.quotation_literals.items) |val| {
+            self.allocator.free(val.Quotation);
+        }
+        self.quotation_literals.deinit();
         for (self.string_literals.items) |str| {
             self.allocator.free(str);
         }
@@ -656,49 +667,80 @@ pub const VM = struct {
         return idx;
     }
 
-    pub fn parse(self: *Self, token: Token) Allocator.Error!Value {
-        switch (token.data) {
-            .String => |str_data| {
-                var ct: usize = 0;
-                var fixer = StringFixer.init(str_data.str, str_data.indent);
-                while (fixer.next() catch unreachable) |_| {
-                    ct += 1;
-                }
+    // TODO handle memory if theres an error
+    //      probably just deinit the vm or something i have no idea
+    // the only error u can have is allocator errors
+    // or unfinished quotation, which happens after u go through everything anyway
+    pub fn parse(self: *Self, tokens: []const Token) Allocator.Error![]Value {
+        var ret = ArrayList(Value).init(self.allocator);
 
-                const buf = try self.allocator.alloc(u8, ct);
-                fixer.reset();
-                ct = 0;
-                while (fixer.next() catch unreachable) |ch| {
-                    buf[ct] = ch;
-                    ct += 1;
-                }
+        var q_stack = Stack(ArrayList(Value)).init(self.allocator);
+        defer q_stack.deinit();
 
-                try self.string_literals.append(buf);
+        for (tokens) |token| {
+            const append_to: *ArrayList(Value) = if (q_stack.data.items.len > 0) q_stack.index(0) catch unreachable else &ret;
 
-                return Value{ .String = buf };
-            },
-            .CharEscape => |ch| {
-                return Value{ .Char = ch };
-            },
-            .Symbol => |sym| {
-                return Value{ .Symbol = try self.internSymbol(sym) };
-            },
-            .Word => |word| {
-                const try_parse_float =
-                    !std.mem.eql(u8, word, "+") and
-                    !std.mem.eql(u8, word, "-") and
-                    !std.mem.eql(u8, word, ".");
-                const fl = std.fmt.parseFloat(f32, word) catch null;
+            switch (token.data) {
+                .String => |str_data| {
+                    var ct: usize = 0;
+                    var fixer = StringFixer.init(str_data.str, str_data.indent);
+                    while (fixer.next() catch unreachable) |_| {
+                        ct += 1;
+                    }
 
-                if (std.fmt.parseInt(i32, word, 10) catch null) |i| {
-                    return Value{ .Int = i };
-                } else if (try_parse_float and (fl != null)) {
-                    return Value{ .Float = fl.? };
-                } else {
-                    return Value{ .Word = try self.internSymbol(word) };
-                }
-            },
+                    const buf = try self.allocator.alloc(u8, ct);
+                    fixer.reset();
+                    ct = 0;
+                    while (fixer.next() catch unreachable) |ch| {
+                        buf[ct] = ch;
+                        ct += 1;
+                    }
+
+                    try self.string_literals.append(buf);
+
+                    try append_to.append(.{ .String = buf });
+                },
+                .CharEscape => |ch| {
+                    try append_to.append(.{ .Char = ch });
+                },
+                .Symbol => |sym| {
+                    try append_to.append(.{ .Symbol = try self.internSymbol(sym) });
+                },
+                .Word => |word| {
+                    if (std.mem.eql(u8, word, "{")) {
+                        try q_stack.push(ArrayList(Value).init(self.allocator));
+                    } else if (std.mem.eql(u8, word, "}")) {
+                        // TODO handle this error for stack underflow
+                        var q_array = q_stack.pop() catch unreachable;
+                        const new_q = .{ .Quotation = q_array.toOwnedSlice() };
+                        try self.quotation_literals.append(new_q);
+                        if (q_stack.data.items.len > 0) {
+                            try (q_stack.index(0) catch unreachable).append(new_q);
+                        } else {
+                            try ret.append(new_q);
+                        }
+                    } else {
+                        const try_parse_float =
+                            !std.mem.eql(u8, word, "+") and
+                            !std.mem.eql(u8, word, "-") and
+                            !std.mem.eql(u8, word, ".");
+                        const fl = std.fmt.parseFloat(f32, word) catch null;
+
+                        if (std.fmt.parseInt(i32, word, 10) catch null) |i| {
+                            try append_to.append(.{ .Int = i });
+                        } else if (try_parse_float and (fl != null)) {
+                            try append_to.append(.{ .Float = fl.? });
+                        } else {
+                            try append_to.append(.{ .Word = try self.internSymbol(word) });
+                        }
+                    }
+                },
+            }
         }
+
+        // TODO if qstack still has stuff on it thats an error
+
+        return ret.toOwnedSlice();
     }
 
     // eval ===
@@ -765,11 +807,6 @@ pub const Thread = struct {
     restore_stack: Stack(Value),
     callables_stack: Stack(Value),
 
-    // note: this coud be a Stack([]const Value)
-    //   but there is a zig bug
-    //   just going to use a Value that will always be a Value.Quotation
-    q_stack: Stack(Value),
-
     pub fn init(vm: *VM, values: []const Value) Self {
         var ret = .{
             .vm = vm,
@@ -781,8 +818,6 @@ pub const Thread = struct {
             .return_stack = Stack(ReturnValue).init(vm.allocator),
             .restore_stack = Stack(Value).init(vm.allocator),
             .callables_stack = Stack(Value).init(vm.allocator),
-
-            .q_stack = Stack(Value).init(vm.allocator),
         };
         return ret;
     }
@@ -791,7 +826,6 @@ pub const Thread = struct {
         for (self.stack.data.items) |val| {
             self.vm.dropValue(val);
         }
-        self.q_stack.deinit();
         self.callables_stack.deinit();
         self.restore_stack.deinit();
         self.return_stack.deinit();
@@ -800,6 +834,8 @@ pub const Thread = struct {
 
     //;
 
+    // TODO would be nice if i could move this into vm
+    //  but FFI_Ptr.display_fn needs *Thread
     pub fn nicePrintValue(self: *Self, value: Value) void {
         switch (value) {
             .Int => |val| std.debug.print("{}", .{val}),
@@ -832,9 +868,20 @@ pub const Thread = struct {
 
     //;
 
-    // TODO refactor this and the next fn so the repl can use it
-    pub fn evaluateValue(self: *Self, val: Value, restore_ct: usize) Error!void {
-        switch (val) {
+    pub fn evaluateValue(self: *Self, value: Value, restore_ct: usize) Error!void {
+        switch (value) {
+            .Word => |idx| {
+                const found_word = self.vm.word_table.items[idx];
+                // found_word can't be a word or this may loop
+                //TODO make a different error for this
+                if (found_word) |val| {
+                    if (val == .Word) return error.InternalError;
+                    try self.evaluateValue(val, 0);
+                } else {
+                    self.error_info.word_not_found = self.vm.symbol_table.items[idx];
+                    return error.WordNotFound;
+                }
+            },
             .Quotation => |q| {
                 // note: TCO
                 if (self.current_execution.len > 0 or restore_ct > 0) {
@@ -854,55 +901,29 @@ pub const Thread = struct {
                         .restore_ct = restore_ct,
                         .has_callable = true,
                     });
-                    try self.callables_stack.push(self.vm.dupValue(val));
+                    try self.callables_stack.push(self.vm.dupValue(value));
                     self.current_execution = call_fn(self, ptr);
                 } else {
-                    try self.stack.push(self.vm.dupValue(val));
+                    try self.stack.push(self.vm.dupValue(value));
                 }
             },
-            else => try self.stack.push(self.vm.dupValue(val)),
+            else => try self.stack.push(self.vm.dupValue(value)),
         }
     }
 
-    pub fn eval(self: *Self) Error!bool {
+    pub fn readValue(self: *Self, value: Value) Error!void {
+        switch (value) {
+            .Word => |idx| try self.evaluateValue(value, 0),
+            else => |val| try self.stack.push(val),
+        }
+    }
+
+    pub fn step(self: *Self) Error!bool {
         while (self.current_execution.len != 0) {
             var value = self.current_execution[0];
-
             self.current_execution.ptr += 1;
             self.current_execution.len -= 1;
-
-            switch (value) {
-                .Word => |idx| {
-                    if (idx == @enumToInt(VM.BuiltInIds.QuoteOpen)) {
-                        try self.q_stack.push(.{ .Quotation = self.current_execution });
-                    } else if (idx == @enumToInt(VM.BuiltInIds.QuoteClose)) {
-                        // TODO if this pop doesnt work, return error.QuotationStackUnderflow
-                        var q = try self.q_stack.pop();
-                        if (self.q_stack.data.items.len == 0) {
-                            q.Quotation.len -= self.current_execution.len + 1;
-                            try self.stack.push(q);
-                        }
-                    } else {
-                        if (self.q_stack.data.items.len > 0) {
-                            return true;
-                        } else {
-                            const found_word = self.vm.word_table.items[idx];
-                            if (found_word) |v| {
-                                try self.evaluateValue(v, 0);
-                            } else {
-                                self.error_info.word_not_found = self.vm.symbol_table.items[idx];
-                                return error.WordNotFound;
-                            }
-                        }
-                    }
-                },
-                else => |val| {
-                    if (self.q_stack.data.items.len == 0) {
-                        try self.stack.push(val);
-                    }
-                },
-            }
-
+            try self.readValue(value);
             return true;
         }
 

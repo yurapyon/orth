@@ -13,6 +13,7 @@ usingnamespace lib;
 
 // TODO need
 // functions
+//   thread exit
 //   functional stuff
 //     compose
 //     map function for vecs vs protos should be specialized
@@ -28,6 +29,8 @@ usingnamespace lib;
 //     handle integer overflow
 //   more string manipulation
 //     things that take chars
+//   error handling from within orth
+//     set and errorhandler for the thread
 // types
 //   make sure accessing them from within zig is easy
 
@@ -35,11 +38,11 @@ usingnamespace lib;
 // functions
 //   bitwise operators
 //     want like u64 type or something
+//   math
+//     fract
 // results
 // contiguous vector thing
 //   []i64, []f64 etc
-// math
-//   fract
 // vec
 //   { 1 2 3 4 } <vec>,clone
 //     essentially just <quotation>,clone quotation>vec
@@ -63,11 +66,10 @@ pub fn f_define(t: *Thread) Thread.Error!void {
     if (name != .Symbol) return error.TypeError;
 
     if (t.vm.word_table.items[name.Symbol]) |prev| {
-        // TODO handle overwrite
-        //  need to handle deleteing the value youre replacing
-    } else {
-        t.vm.word_table.items[name.Symbol] = value;
+        // TODO print that youre overriding?
+        t.vm.dropValue(prev);
     }
+    t.vm.word_table.items[name.Symbol] = value;
 }
 
 pub fn f_set_doc(t: *Thread) Thread.Error!void {
@@ -84,10 +86,10 @@ pub fn f_set_doc(t: *Thread) Thread.Error!void {
     };
 
     if (t.vm.docs_table.items[id]) |prev| {
-        // TODO handle overwrite
-    } else {
-        t.vm.docs_table.items[id] = try t.vm.allocator.dupe(u8, doc_string.String);
+        t.vm.allocator.free(prev);
     }
+
+    t.vm.docs_table.items[id] = try t.vm.allocator.dupe(u8, doc_string.String);
 }
 pub fn f_get_doc(t: *Thread) Thread.Error!void {
     const val = try t.stack.pop();
@@ -118,6 +120,7 @@ pub fn f_ref(t: *Thread) Thread.Error!void {
 pub fn f_eval(t: *Thread) Thread.Error!void {
     const val = try t.stack.pop();
     try t.evaluateValue(val, 0);
+    // TODO can u drop this?
     t.vm.dropValue(val);
 }
 
@@ -193,12 +196,22 @@ pub fn f_parse(t: *Thread) Thread.Error!void {
     const str = try t.stack.pop();
     if (str != .String) return error.TypeError;
 
-    var tokens = Tokenizer.init(str.String);
+    var tk = Tokenizer.init(str.String);
+    var tokens = ArrayList(Token).init(t.vm.allocator);
+    defer tokens.deinit();
 
-    while (tokens.next() catch unreachable) |tok| {
-        // TODO i dont think this is right but idk
-        try t.evaluateValue(t.vm.parse(tok) catch unreachable, 0);
+    // TODO report errors better
+    //  errors like this should make it into orth
+    while (tk.next() catch unreachable) |token| {
+        try tokens.append(token);
     }
+
+    const vals = t.vm.parse(tokens.items) catch unreachable;
+    defer t.vm.allocator.free(vals);
+
+    var rc = try ft_quotation.makeRc(t.vm.allocator);
+    try rc.obj.appendSlice(vals);
+    try t.evaluateValue(.{ .FFI_Ptr = ft_quotation.ffi_type.makePtr(rc.ref()) }, 0);
 }
 
 // built in types ===
@@ -789,15 +802,22 @@ pub const ft_quotation = struct {
 
     //;
 
-    fn makeRcFromSlice(allocator: *Allocator, slice: []const Value) Allocator.Error!*Rc(ArrayList(Value)) {
+    // TODO put a generic function like this into the Rc struct
+    pub fn makeRc(allocator: *Allocator) Allocator.Error!*Rc(ArrayList(Value)) {
         var rc = try allocator.create(Rc(ArrayList(Value)));
         errdefer allocator.destroy(rc);
         rc.* = Rc(ArrayList(Value)).init();
         rc.obj = ArrayList(Value).init(allocator);
-        try rc.obj.appendSlice(slice);
-
         return rc;
     }
+
+    pub fn makeRcFromSlice(allocator: *Allocator, slice: []const Value) Allocator.Error!*Rc(ArrayList(Value)) {
+        var rc = try makeRc(allocator);
+        try rc.obj.appendSlice(slice);
+        return rc;
+    }
+
+    //;
 
     pub fn _make(t: *Thread) Thread.Error!void {
         var rc = try t.vm.allocator.create(Rc(ArrayList(Value)));

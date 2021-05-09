@@ -12,7 +12,6 @@
 
 ; [ 1 2 3 ]vec
 ; { 2 3 + }
-; :symbol>word ref :/ @
 ; "wow"
 ; .stack
 ; {
@@ -40,10 +39,26 @@
 ; { cell-char } { cell-lock } bi
 ; .stack 2drop
 
-newline
-:@doc .doc
-:newline .doc
-newline
+;"2 { + } curry :plus2 @" parse
 
-{ read parse rp } :rp @
-rp
+; 2 plus2 .stack
+
+{ panic
+} :exit @
+
+{ "* " display
+} :show-prompt @
+
+{ show-prompt
+  read
+  parse
+  .stack
+  newline
+  rp-loop } :rp-loop @
+
+{ "~ @ orth @ ~" display newline newline
+  rp-loop
+} :start-repl @
+
+start-repl
+; :dup .doc

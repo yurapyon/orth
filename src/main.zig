@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 //;
 
 const lib = @import("lib.zig");
+usingnamespace lib;
 const builtins = @import("builtins.zig");
 
 pub fn readFile(allocator: *Allocator, filename: []const u8) ![]u8 {
@@ -13,7 +14,7 @@ pub fn readFile(allocator: *Allocator, filename: []const u8) ![]u8 {
 }
 
 pub fn something(allocator: *Allocator) !void {
-    var vm = try lib.VM.init(allocator);
+    var vm = try VM.init(allocator);
     defer vm.deinit();
 
     try vm.defineWord("#t", .{ .Boolean = true }, "boolean true");
@@ -22,7 +23,7 @@ pub fn something(allocator: *Allocator) !void {
 
     for (builtins.builtins) |bi| {
         const idx = try vm.internSymbol(bi.name);
-        vm.word_table.items[idx] = lib.Value{
+        vm.word_table.items[idx] = Value{
             .FFI_Fn = .{
                 .name = idx,
                 .func = bi.func,
@@ -35,58 +36,65 @@ pub fn something(allocator: *Allocator) !void {
     _ = try vm.installFFI_Type(&builtins.ft_string.ffi_type);
     // _ = try vm.installFFI_Type(builtins.ft_proto.ft);
 
-    var base_f = try readFile(allocator, "src/base.orth");
-    defer allocator.free(base_f);
+    {
+        var f = try readFile(allocator, "src/base.orth");
+        defer allocator.free(f);
 
-    var btk = lib.Tokenizer.init(base_f);
-    var base_vals = std.ArrayList(lib.Value).init(vm.allocator);
-    defer base_vals.deinit();
+        var tk = Tokenizer.init(f);
+        var tokens = std.ArrayList(Token).init(vm.allocator);
+        defer tokens.deinit();
 
-    while (try btk.next()) |tok| {
-        try base_vals.append(try vm.parse(tok));
+        while (try tk.next()) |tok| {
+            try tokens.append(tok);
+        }
+
+        const values = try vm.parse(tokens.items);
+        defer vm.allocator.free(values);
+
+        var t = Thread.init(&vm, values);
+        defer t.deinit();
+
+        while (try t.step()) {}
     }
 
-    var t = lib.Thread.init(&vm, base_vals.items);
-    defer t.deinit();
+    {
+        var f = try readFile(allocator, "tests/test.orth");
+        defer allocator.free(f);
 
-    for (base_vals.items) |v| {
-        // std.debug.print(". ", .{});
-        // t.nicePrintValue(v);
-        // std.debug.print("\n", .{});
-    }
+        var tk = Tokenizer.init(f);
+        var tokens = std.ArrayList(Token).init(vm.allocator);
+        defer tokens.deinit();
 
-    // try vm.eval(base_vals.items);
-    // var t = lib.Thread.init(&vm, base_vals.items);
-    while (try t.eval()) {}
-    //;
+        while (try tk.next()) |tok| {
+            try tokens.append(tok);
+        }
 
-    var f = try readFile(allocator, "tests/test.orth");
-    defer allocator.free(f);
+        const values = try vm.parse(tokens.items);
+        defer vm.allocator.free(values);
 
-    var test_vals = std.ArrayList(lib.Value).init(allocator);
-    defer test_vals.deinit();
+        var t = Thread.init(&vm, values);
+        defer t.deinit();
 
-    var tk = lib.Tokenizer.init(f);
-    while (try tk.next()) |tok| {
-        try test_vals.append(try vm.parse(tok));
-    }
+        for (values) |val| {
+            // t.nicePrintValue(val);
+            // std.debug.print("\n", .{});
+        }
 
-    var test_t = lib.Thread.init(&vm, test_vals.items);
-    defer test_t.deinit();
-    while (true) {
-        var running = test_t.eval() catch |err| {
-            switch (err) {
-                error.WordNotFound => {
-                    std.log.warn("word not found: {}", .{test_t.error_info.word_not_found});
-                    return;
-                },
-                else => {
-                    std.log.warn("err: {}", .{err});
-                    return err;
-                },
-            }
-        };
-        if (!running) break;
+        while (true) {
+            var running = t.step() catch |err| {
+                switch (err) {
+                    error.WordNotFound => {
+                        std.log.warn("word not found: {}", .{t.error_info.word_not_found});
+                        return;
+                    },
+                    else => {
+                        std.log.warn("err: {}", .{err});
+                        return err;
+                    },
+                }
+            };
+            if (!running) break;
+        }
     }
 }
 
