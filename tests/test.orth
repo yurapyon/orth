@@ -60,5 +60,9 @@
   rp-loop
 } :start-repl @
 
-start-repl
+; start-repl
 ; :dup .doc
+
+{ 1 2 + } { qreverse! } keep
+{ 1 2 + } dup qreverse!
+.stack

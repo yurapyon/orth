@@ -522,7 +522,7 @@ pub const FFI_Type = struct {
 
     fn defaultDisplay(t: *Thread, ptr: FFI_Ptr) void {
         std.debug.print("*<{} {}>", .{
-            t.vm.type_table[ptr.type_id].name,
+            t.vm.type_table.items[ptr.type_id].name,
             ptr.ptr,
         });
     }
@@ -586,7 +586,6 @@ pub const VM = struct {
 
     symbol_table: ArrayList([]const u8),
     word_table: ArrayList(?Value),
-    docs_table: ArrayList(?[]const u8),
     type_table: ArrayList(*const FFI_Type),
 
     string_literals: ArrayList([]const u8),
@@ -602,7 +601,6 @@ pub const VM = struct {
 
             .symbol_table = ArrayList([]const u8).init(allocator),
             .word_table = ArrayList(?Value).init(allocator),
-            .docs_table = ArrayList(?[]const u8).init(allocator),
             .type_table = ArrayList(*const FFI_Type).init(allocator),
 
             .string_literals = ArrayList([]const u8).init(allocator),
@@ -637,12 +635,6 @@ pub const VM = struct {
             self.allocator.free(str);
         }
         self.string_literals.deinit();
-        for (self.docs_table.items) |maybe_doc| {
-            if (maybe_doc) |doc| {
-                self.allocator.free(doc);
-            }
-        }
-        self.docs_table.deinit();
         self.type_table.deinit();
         self.word_table.deinit();
         for (self.symbol_table.items) |sym| {
@@ -663,7 +655,6 @@ pub const VM = struct {
         const idx = self.symbol_table.items.len;
         try self.symbol_table.append(try self.allocator.dupe(u8, str));
         try self.word_table.append(null);
-        try self.docs_table.append(null);
         return idx;
     }
 
@@ -774,7 +765,6 @@ pub const VM = struct {
         const idx = try self.internSymbol(name);
         // TODO dup value here?
         self.word_table.items[idx] = value;
-        self.docs_table.items[idx] = if (doc_string) |str| try self.allocator.dupe(u8, str) else null;
     }
 };
 
@@ -913,6 +903,7 @@ pub const Thread = struct {
 
     pub fn readValue(self: *Self, value: Value) Error!void {
         switch (value) {
+            // TODO handle errors here, any errors besides allocator errors
             .Word => |idx| try self.evaluateValue(value, 0),
             else => |val| try self.stack.push(val),
         }

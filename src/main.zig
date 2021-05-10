@@ -34,7 +34,7 @@ pub fn something(allocator: *Allocator) !void {
     _ = try vm.installFFI_Type(&builtins.ft_quotation.ffi_type);
     _ = try vm.installFFI_Type(&builtins.ft_vec.ffi_type);
     _ = try vm.installFFI_Type(&builtins.ft_string.ffi_type);
-    // _ = try vm.installFFI_Type(builtins.ft_proto.ft);
+    _ = try vm.installFFI_Type(&builtins.ft_map.ffi_type);
 
     {
         var f = try readFile(allocator, "src/base.orth");
@@ -85,7 +85,7 @@ pub fn something(allocator: *Allocator) !void {
                 switch (err) {
                     error.WordNotFound => {
                         std.log.warn("word not found: {}", .{t.error_info.word_not_found});
-                        return;
+                        return err;
                     },
                     else => {
                         std.log.warn("err: {}", .{err});

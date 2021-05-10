@@ -1,7 +1,13 @@
 ; todo add more documentation
 
-{ over doc! @
-} :@doc @
+; TODO
+; <map> :doc-table @
+; { doc-table mset! } :doc! @
+{ doc-table mget* drop } :doc @
+
+; { over doc! @ } :@doc @
+{ } :doc! @
+{ drop @ } :@doc @
 
 "( value symbol doc-string -- )\ndefine with a doc string" :@doc doc!
 
@@ -11,7 +17,7 @@
   { ref display } keep newline
   doc display newline
 } :.doc
-"( -- )\nprint documentation"
+"( symbol -- )\nprint documentation for a word"
 @doc
 
 { ref eval
@@ -178,15 +184,18 @@
 
 { { > } 2keep ? } :max @
 { { < } 2keep ? } :min @
-{ min max } :clamp @
+{ min max } :clamp
+"( min max val -- clamped )"
+@doc
 
 { dup 0 < { neg } when
 } :abs @
 
-{ ; ( min max val -- wrapped )
-pick swap over { - } 2bi^
-swap mod +
-} :wrap @
+{ pick swap over { - } 2bi^
+  swap mod +
+} :wrap
+"( min max val -- wrapped )"
+@doc
 
 ; =====
 
@@ -222,26 +231,26 @@ swap mod +
 
 #sentinel :[ @
 
-{
-over #sentinel eq? { nip } { { vpush! } keep ]vec' } if
+{ over #sentinel eq? { nip } { { vpush! } keep ]vec' } if
 } :]vec' @
 
-{ ; ( #sentinel ... a b c -- vec )
-<vec> ]vec' { vreverse! } keep
-} :]vec @
+{ <vec> ]vec' { vreverse! } keep
+} :]vec
+"( #sentinel ... a b c -- vec )"
+@doc
 
-{
-over #sentinel eq? { nip } { { qpush! } keep ]q' } if
+{ over #sentinel eq? { nip } { { qpush! } keep ]q' } if
 } :]q' @
 
-{ ; ( #sentinel ... a b c -- vec )
-<quotation> ]q' { qreverse! } keep
-} :]q @
+{ <quotation> ]q' { qreverse! } keep
+} :]q
+"( #sentinel ... a b c -- quotation )"
+@doc
 
-; TODO rewerite without return stack
-{ dup #sentinel eq? { drop <R } { swap .R mset! ]map' } if
+{ over #sentinel eq? { nip } { { { swap } dip mset! } keep ]map' } if
 } :]map' @
 
-{ ; ( #sentinel ... k1 v1 k2 v2 -- map )
-<map> >R ]map'
-} :]map @
+{ <map> ]map'
+} :]map
+" ( #sentinel ... k1 v1 k2 v2 -- map ) "
+@doc
