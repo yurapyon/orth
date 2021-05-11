@@ -16,18 +16,18 @@ const ArrayList = std.ArrayList;
 //   dont need to stay around for the live of the vm
 //   the vm deep copies quotations
 
-// tokenizer syntax: " #\ :
+// tokenizer syntax: " # :
 //    parser syntax: { } float int
 // i think thats all you need,
 //   as in fancy 'defining syntax at runtime' like forth isnt neccessary
 
 //;
 
-// envs
-//  do it c style
-//  have ways to load new words into the vm from a hashtable
-//    with renaming, excluding
-//  vm word_table is the global lookup table for all words in the session
+// envs/libraries are ways of naming units of code and controlling scope
+//   all words are loaded into the word_table and converted to ids anyway
+//   have ways to load new words into the vm from a hashtable
+//     with renaming, excluding
+//   vm word_table is the global lookup table for all words in the session
 
 // unicode is currently not supported but i would like to have it in the future
 //   shouldnt be hard
@@ -40,23 +40,30 @@ const ArrayList = std.ArrayList;
 //     records can easily be made
 
 // TODO need
-// repl
-//   load and read files
-//   probably use a scheduler thing
 // error reporting
 //   use error_info
 //   stack trace thing
 //   parse with column number/word number somehow
 //     use line_num in eval code
-// should vecs be callable
-//   having quoations as a separate type is kindof annoying
 // better int parser
 //   hex ints
+//     #x00ff
+//     #b11001010
 // better float parser
 //   allow syntax like 1234f
 // index stack at n to drop or dup
+// dont allow to define words that start with #
+// callability/ read vs eval
+//   should everything thats callable just auto call itself on read
+//   then read and eval would be the same thing
+//   ref or symbol>word would be the way to get callables on the stack
+//   should ffi_fns evaluate on read
+//   quotation literals dont evaluate on read and shouldnt
 
 // TODO want
+// repl
+//   load and read files
+//   probably use a scheduler thing
 // certain things cant be symbols
 //   because symbols are what you use to name functions and stuff
 //   wait for better float and int parser
@@ -238,6 +245,7 @@ pub const Token = struct {
             indent: usize,
         },
         CharEscape: u8,
+        IntEscape: i64,
         Symbol: []const u8,
         Word: []const u8,
     };
@@ -252,6 +260,7 @@ pub const Tokenizer = struct {
         InvalidString,
         UnfinishedString,
         InvalidCharEscape,
+        InvalidIntEscape,
         InvalidSymbol,
         InvalidWord,
     };
@@ -266,7 +275,8 @@ pub const Tokenizer = struct {
         InComment,
         InString,
         MaybeInEscape,
-        InEscape,
+        InCharEscape,
+        InIntEscape,
         InSymbol,
         InWord,
     };
@@ -307,7 +317,7 @@ pub const Tokenizer = struct {
     }
 
     pub fn charIsWordValid(ch: u8) bool {
-        return ch != '"' and ch != ':';
+        return ch != '"' and ch != ':' and ch != '{' and ch != '}';
     }
 
     pub fn parseCharEscape(str: []const u8) Error!u8 {
@@ -322,6 +332,14 @@ pub const Tokenizer = struct {
             } else {
                 return error.InvalidCharEscape;
             }
+        }
+    }
+
+    pub fn parseIntEscape(str: []const u8) Error!i64 {
+        switch (str[0]) {
+            'b' => return std.fmt.parseInt(i64, str[1..], 2) catch error.InvalidIntEscape,
+            'x' => return std.fmt.parseInt(i64, str[1..], 16) catch error.InvalidIntEscape,
+            else => return error.InvalidIntEscape,
         }
     }
 
@@ -382,16 +400,32 @@ pub const Tokenizer = struct {
                     }
                 },
                 .MaybeInEscape => {
-                    self.state = if (ch == '\\') .InEscape else .InWord;
+                    self.state = switch (ch) {
+                        '\\' => .InCharEscape,
+                        'x', 'b' => .InIntEscape,
+                        // TODO
+                        else => .InWord,
+                    };
                 },
-                .InEscape => {
+                .InCharEscape => {
                     if (charIsDelimiter(ch)) {
                         self.state = .Empty;
-
                         return Token{
                             .data = .{
                                 .CharEscape = try parseCharEscape(
                                     self.buf[(self.start_char + 2)..(self.end_char - 1)],
+                                ),
+                            },
+                        };
+                    }
+                },
+                .InIntEscape => {
+                    if (charIsDelimiter(ch)) {
+                        self.state = .Empty;
+                        return Token{
+                            .data = .{
+                                .IntEscape = try parseIntEscape(
+                                    self.buf[(self.start_char + 1)..(self.end_char - 1)],
                                 ),
                             },
                         };
@@ -436,12 +470,22 @@ pub const Tokenizer = struct {
                     return error.UnfinishedString;
                 },
                 .MaybeInEscape => return error.InvalidCharEscape,
-                .InEscape => {
+                .InCharEscape => {
                     self.state = .Empty;
                     return Token{
                         .data = .{
                             .CharEscape = try parseCharEscape(
                                 self.buf[(self.start_char + 2)..self.end_char],
+                            ),
+                        },
+                    };
+                },
+                .InIntEscape => {
+                    self.state = .Empty;
+                    return Token{
+                        .data = .{
+                            .IntEscape = try parseIntEscape(
+                                self.buf[(self.start_char + 1)..(self.end_char - 1)],
                             ),
                         },
                     };
@@ -694,6 +738,9 @@ pub const VM = struct {
                 .CharEscape => |ch| {
                     try append_to.append(.{ .Char = ch });
                 },
+                .IntEscape => |i| {
+                    try append_to.append(.{ .Int = i });
+                },
                 .Symbol => |sym| {
                     try append_to.append(.{ .Symbol = try self.internSymbol(sym) });
                 },
@@ -828,7 +875,7 @@ pub const Thread = struct {
     //  but FFI_Ptr.display_fn needs *Thread
     pub fn nicePrintValue(self: *Self, value: Value) void {
         switch (value) {
-            .Int => |val| std.debug.print("{}", .{val}),
+            .Int => |val| std.debug.print("{b}", .{val}),
             .Float => |val| std.debug.print("{d}f", .{val}),
             .Char => |val| switch (val) {
                 '\n' => std.debug.print("#\\space", .{}),

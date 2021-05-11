@@ -1,14 +1,10 @@
 ; todo add more documentation
 
-; TODO
-; <map> :doc-table @
-; { doc-table mset! } :doc! @
-{ doc-table mget* drop } :doc @
+<map> :doc-table @
+{ doc-table mset! } :doc! @
+{ doc-table mget* "docstring not found" unwrap,default } :doc @
 
-; { over doc! @ } :@doc @
-{ } :doc! @
-{ drop @ } :@doc @
-
+{ over doc! @ } :@doc @
 "( value symbol doc-string -- )\ndefine with a doc string" :@doc doc!
 
 { { symbol>string display } keep
@@ -172,7 +168,7 @@
 { type-of :string eq? } :string? @
 { type-of :word eq? } :word? @
 { type-of :symbol eq? } :symbol? @
-{ type-of :quotation eq? } :quotation? @
+{ type-of :quotation eq? } :quotation-literal? @
 { type-of :ffi-fn eq? } :ffi-fn? @
 { type-of :ffi-ptr eq? } :ffi-ptr? @
 
@@ -210,8 +206,13 @@
 { { } { "panic" . panic } if
 } :unwrap @
 
+; val t/f def -- val or default
+{ { swap } dip ?
+} :unwrap,default @
+
 ; quotations ===
 
+; TODO
 { 0 swap qinsert!
 } :qpush-front! @
 
@@ -237,14 +238,6 @@
 { <vec> ]vec' { vreverse! } keep
 } :]vec
 "( #sentinel ... a b c -- vec )"
-@doc
-
-{ over #sentinel eq? { nip } { { qpush! } keep ]q' } if
-} :]q' @
-
-{ <quotation> ]q' { qreverse! } keep
-} :]q
-"( #sentinel ... a b c -- quotation )"
 @doc
 
 { over #sentinel eq? { nip } { { { swap } dip mset! } keep ]map' } if

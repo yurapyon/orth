@@ -26,6 +26,7 @@ usingnamespace lib;
 //     write
 //       need to translate '\n' in strings to a "\n"
 //   math stuff
+//     dont type check, have separte functions for ints and floats
 //     handle integer overflow
 //     have fmod and imod built in then define mod in orth ?
 //       handles type coersion
@@ -368,6 +369,83 @@ pub fn f_int_to_float(t: *Thread) Thread.Error!void {
     try t.stack.push(.{ .Float = @intToFloat(f32, a.Int) });
 }
 
+// bitwise ===
+
+pub fn f_bnot(t: *Thread) Thread.Error!void {
+    const val = try t.stack.pop();
+    switch (val) {
+        .Int => |i| try t.stack.push(.{ .Int = ~i }),
+        else => return error.TypeError,
+    }
+}
+
+pub fn f_band(t: *Thread) Thread.Error!void {
+    const a = try t.stack.pop();
+    const b = try t.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
+    switch (a) {
+        .Int => |i| try t.stack.push(.{ .Int = i & b.Int }),
+        else => return error.TypeError,
+    }
+}
+
+pub fn f_bior(t: *Thread) Thread.Error!void {
+    const a = try t.stack.pop();
+    const b = try t.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
+    switch (a) {
+        .Int => |i| try t.stack.push(.{ .Int = i | b.Int }),
+        else => return error.TypeError,
+    }
+}
+
+pub fn f_bxor(t: *Thread) Thread.Error!void {
+    const a = try t.stack.pop();
+    const b = try t.stack.pop();
+    if (@as(@TagType(Value), a) != b) return error.TypeError;
+    switch (a) {
+        .Int => |i| try t.stack.push(.{ .Int = i ^ b.Int }),
+        else => return error.TypeError,
+    }
+}
+
+pub fn f_bshl(t: *Thread) Thread.Error!void {
+    const amt = try t.stack.pop();
+    const num = try t.stack.pop();
+    if (@as(@TagType(Value), amt) != num) return error.TypeError;
+    switch (num) {
+        // TODO do something abt these casts
+        .Int => |i| try t.stack.push(.{ .Int = num.Int << @intCast(u6, amt.Int) }),
+        else => return error.TypeError,
+    }
+}
+
+pub fn f_bshr(t: *Thread) Thread.Error!void {
+    const amt = try t.stack.pop();
+    const num = try t.stack.pop();
+    if (@as(@TagType(Value), amt) != num) return error.TypeError;
+    switch (num) {
+        // TODO do something abt these casts
+        .Int => |i| try t.stack.push(.{ .Int = num.Int >> @intCast(u6, amt.Int) }),
+        else => return error.TypeError,
+    }
+}
+
+pub fn f_integer_length(t: *Thread) Thread.Error!void {
+    const num = try t.stack.pop();
+    switch (num) {
+        .Int => |i| {
+            var ct: i64 = 0;
+            var val = i;
+            while (val > 0) : (val >>= 1) {
+                ct += 1;
+            }
+            try t.stack.push(.{ .Int = ct });
+        },
+        else => return error.TypeError,
+    }
+}
+
 // conditionals ===
 
 pub fn f_choose(t: *Thread) Thread.Error!void {
@@ -653,7 +731,6 @@ pub const ft_string = struct {
     pub fn _make(t: *Thread) Thread.Error!void {
         var rc = try Rc(ArrayList(u8)).makeOne(t.vm.allocator);
         rc.obj = ArrayList(u8).init(t.vm.allocator);
-
         try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
     }
 
@@ -728,14 +805,13 @@ pub const ft_string = struct {
 
 // quotation ===
 
-// TODO
 pub const ft_quotation = struct {
     const Self = @This();
 
     pub var ffi_type = FFI_Type{
         .name = "ffi-quotation",
         .call_fn = call,
-        // .display_fn = display,
+        .display_fn = display,
         .dup_fn = dup,
         .drop_fn = drop,
     };
@@ -774,114 +850,37 @@ pub const ft_quotation = struct {
 
     //;
 
-    fn getSlice(value: Value) Thread.Error![]const Value {
-        switch (value) {
-            .Quotation => |q| return q,
-            .FFI_Ptr => |ptr| {
-                try Self.ffi_type.checkType(ptr);
-                return ptr.cast(Rc(ArrayList(Value))).obj.items;
-            },
-            else => return error.TypeError,
-        }
-    }
-
-    fn copyOnWrite(allocator: *Allocator, value: Value) Thread.Error!*Rc(ArrayList(Value)) {
-        switch (value) {
-            .Quotation => |q| return try makeRcFromSlice(allocator, q),
-            .FFI_Ptr => |ptr| {
-                try Self.ffi_type.checkType(ptr);
-                return ptr.cast(Rc(ArrayList(Value)));
-            },
-            else => return error.TypeError,
-        }
-    }
-
-    fn makeRcFromSlice(allocator: *Allocator, slice: []const Value) Allocator.Error!*Rc(ArrayList(Value)) {
-        var rc = try Rc(ArrayList(Value)).makeOne(allocator);
-        rc.obj = ArrayList(Value).init(allocator);
-        try rc.obj.appendSlice(slice);
-        return rc;
-    }
-
-    //;
-
-    pub fn _make(t: *Thread) Thread.Error!void {
-        var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
-        rc.obj = ArrayList(Value).init(t.vm.allocator);
-        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
-    }
-
-    pub fn _clone(t: *Thread) Thread.Error!void {
+    pub fn _to_vec(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         switch (this) {
             .Quotation => |q| {
-                var rc = try makeRcFromSlice(t.vm.allocator, q);
-                try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+                var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
+                rc.obj = ArrayList(Value).init(t.vm.allocator);
+                try rc.obj.appendSlice(q);
+                try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(rc) });
             },
             .FFI_Ptr => |ptr| {
                 try Self.ffi_type.checkType(ptr);
                 var this_rc = ptr.cast(Rc(ArrayList(Value)));
-                var rc = try makeRcFromSlice(t.vm.allocator, this_rc.obj.items);
-                try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+                if (this_rc.ref_ct == 1) {
+                    try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(this_rc) });
+                } else {
+                    var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
+                    rc.obj = ArrayList(Value).init(t.vm.allocator);
+                    try rc.obj.appendSlice(this_rc.obj.items);
+                    try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(rc) });
+                    t.vm.dropValue(this);
+                }
             },
             else => return error.TypeError,
         }
-        t.vm.dropValue(this);
-    }
-
-    pub fn _push(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        const val = try t.stack.pop();
-        var rc = try copyOnWrite(t.vm.allocator, this);
-        try rc.obj.append(val);
-        t.vm.dropValue(this);
-    }
-
-    pub fn _insert(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        const at = try t.stack.pop();
-        const val = try t.stack.pop();
-        var rc = try copyOnWrite(t.vm.allocator, this);
-        if (at != .Int) return error.TypeError;
-        try rc.obj.insert(@intCast(usize, at.Int), val);
-        t.vm.dropValue(this);
-    }
-
-    // TODO append
-
-    pub fn _set(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        const idx = try t.stack.pop();
-        const val = try t.stack.pop();
-        var rc = try copyOnWrite(t.vm.allocator, this);
-        if (idx != .Int) return error.TypeError;
-        rc.obj.items[@intCast(usize, idx.Int)] = t.vm.dupValue(val);
-        t.vm.dropValue(this);
-    }
-
-    pub fn _get(t: *Thread) Thread.Error!void {
-        // TODO handle negative indices
-        //        could do it where it indexes fron the end
-        //   out of bounds error
-        const this = try t.stack.pop();
-        const idx = try t.stack.pop();
-        const slice = try getSlice(this);
-        if (idx != .Int) return error.TypeError;
-
-        try t.stack.push(t.vm.dupValue(slice[@intCast(usize, idx.Int)]));
-        t.vm.dropValue(this);
-    }
-
-    pub fn _reverse_in_place(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        var rc = try copyOnWrite(t.vm.allocator, this);
-        std.mem.reverse(Value, rc.obj.items);
-        t.vm.dropValue(this);
     }
 };
 
 // vec ===
 
+// TODO vec insert, vec append
+// non mutating versions of fns
 pub const ft_vec = struct {
     const Self = @This();
 
@@ -904,8 +903,8 @@ pub const ft_vec = struct {
 
     pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
         var rc = ptr.cast(Rc(ArrayList(Value)));
-        // return Self.ffi_type.makePtr(rc.ref());
-        return ptr;
+        rc.inc();
+        return Self.ffi_type.makePtr(rc);
     }
 
     pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
@@ -923,12 +922,42 @@ pub const ft_vec = struct {
 
     // TODO all of these things need to be refactored if i wana reuse them for quotations
     pub fn _make(t: *Thread) Thread.Error!void {
-        var rc = try t.vm.allocator.create(Rc(ArrayList(Value)));
-        errdefer t.vm.allocator.destroy(rc);
-        rc.* = Rc(ArrayList(Value)).init();
+        var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
         rc.obj = ArrayList(Value).init(t.vm.allocator);
+        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+    }
 
-        // try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
+    pub fn _make_capacity(t: *Thread) Thread.Error!void {
+        const capacity = try t.stack.pop();
+        if (capacity != .Int) return error.TypeError;
+
+        var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
+        rc.obj = try ArrayList(Value).initCapacity(
+            t.vm.allocator,
+            @intCast(usize, capacity.Int),
+        );
+
+        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+    }
+
+    pub fn _to_quotation(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        switch (this) {
+            .FFI_Ptr => |ptr| {
+                try Self.ffi_type.checkType(ptr);
+                var this_rc = ptr.cast(Rc(ArrayList(Value)));
+                if (this_rc.ref_ct == 1) {
+                    try t.stack.push(.{ .FFI_Ptr = ft_quotation.ffi_type.makePtr(this_rc) });
+                } else {
+                    var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
+                    rc.obj = ArrayList(Value).init(t.vm.allocator);
+                    try rc.obj.appendSlice(this_rc.obj.items);
+                    try t.stack.push(.{ .FFI_Ptr = ft_quotation.ffi_type.makePtr(rc) });
+                    t.vm.dropValue(this);
+                }
+            },
+            else => return error.TypeError,
+        }
     }
 
     pub fn _push(t: *Thread) Thread.Error!void {
@@ -1038,8 +1067,8 @@ pub const ft_map = struct {
 
     pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
         var rc = ptr.cast(Rc(Map));
-        //return Self.ffi_type.makePtr(rc.ref());
-        return ptr;
+        rc.inc();
+        return Self.ffi_type.makePtr(rc);
     }
 
     pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
@@ -1058,7 +1087,7 @@ pub const ft_map = struct {
         var rc = try Rc(Map).makeOne(t.vm.allocator);
         errdefer t.vm.allocator.destroy(rc);
         rc.obj = Map.init(t.vm.allocator);
-        // try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc.ref()) });
+        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
     }
 
     //     //;
@@ -1092,7 +1121,7 @@ pub const ft_map = struct {
             try t.stack.push(t.vm.dupValue(val));
             try t.stack.push(.{ .Boolean = true });
         } else {
-            try t.stack.push(.{ .Boolean = false });
+            try t.stack.push(.{ .String = "not found" });
             try t.stack.push(.{ .Boolean = false });
         }
 
@@ -1216,6 +1245,35 @@ pub const builtins = [_]struct {
     },
 
     .{
+        .name = "~",
+        .func = f_bnot,
+    },
+    .{
+        .name = "&",
+        .func = f_band,
+    },
+    .{
+        .name = "|",
+        .func = f_bior,
+    },
+    .{
+        .name = "^",
+        .func = f_bxor,
+    },
+    .{
+        .name = "<<",
+        .func = f_bshl,
+    },
+    .{
+        .name = ">>",
+        .func = f_bshr,
+    },
+    .{
+        .name = "integer-length",
+        .func = f_integer_length,
+    },
+
+    .{
         .name = "?",
         .func = f_choose,
     },
@@ -1308,7 +1366,7 @@ pub const builtins = [_]struct {
         .func = ft_string._clone,
     },
     .{
-        .name = "string-append",
+        .name = "string-append!",
         .func = ft_string._append_in_place,
     },
     .{
@@ -1317,37 +1375,21 @@ pub const builtins = [_]struct {
     },
 
     .{
-        .name = "<quotation>",
-        .func = ft_quotation._make,
-    },
-    .{
-        .name = "<quotation>,clone",
-        .func = ft_quotation._clone,
-    },
-    .{
-        .name = "qpush!",
-        .func = ft_quotation._push,
-    },
-    .{
-        .name = "qinsert!",
-        .func = ft_quotation._insert,
-    },
-    .{
-        .name = "qget",
-        .func = ft_quotation._get,
-    },
-    .{
-        .name = "qset!",
-        .func = ft_quotation._set,
-    },
-    .{
-        .name = "qreverse!",
-        .func = ft_quotation._reverse_in_place,
+        .name = "quotation>vec",
+        .func = ft_quotation._to_vec,
     },
 
     .{
         .name = "<vec>",
         .func = ft_vec._make,
+    },
+    .{
+        .name = "<vec>,capacity",
+        .func = ft_vec._make_capacity,
+    },
+    .{
+        .name = "vec>quotation",
+        .func = ft_vec._to_quotation,
     },
     .{
         .name = "vpush!",

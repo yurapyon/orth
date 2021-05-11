@@ -1,68 +1,90 @@
-; TODO need
-;   ffi quotations
-;   making a getter is essentially currying
-;     need to make { 0 swap vget }vget
-; { cell
-; } define-struct
+{ 0 ~ swap << ~
+} :gen-bitmask @
 
-; [ :cell
-;   :char mut
-;   :lock immut
-; ]vec vec>struct :cell @struct
+{ #x1 &
+} :last-bit @
 
-; [ 1 2 3 ]vec
-; { 2 3 + }
-; "wow"
-; .stack
-; {
-; [ 1 2 :+ / ]q :q @
-; q .stack drop
-; 3    :q ref qpush!
-; :+ / :q ref qpush!
-; q .stack drop
-; 
-; :q ref
-; .stack
-; } eval
-; q .stack drop
-; 5 0 :q ref qset!
-; q .stack drop
+{ { 1 >> } { last-bit } bi
+} :chop-bit @
 
-; { [ 0 #f ]vec } "<cell>" string>symbol @
-; { 0 swap vget } :cell-char @
-; { 1 swap vget } :cell-lock @
-; { 0 swap vset! } :cell-char! @
-; { 1 swap vset! } :cell-lock! @
-; 
-; <cell> { :a swap cell-char! } keep
-; .stack
-; { cell-char } { cell-lock } bi
-; .stack 2drop
+{ 1 << |
+} :append-bit @
 
-;"2 { + } curry :plus2 @" parse
+{ #xff &
+} :last-byte @
 
-; 2 plus2 .stack
+{ { 8 >> } { last-byte } bi
+} :chop-byte @
 
-{ panic
-} :exit @
+{ pick 0 =
+  { 2nip }
+  { { 1 - }
+    { chop-bit }
+    { append-bit }
+    tri*
+    reverse-bits'
+  }
+  if
+} :reverse-bits' @
 
-{ "* " display
-} :show-prompt @
+{ 0 reverse-bits'
+} :reverse-bits
+"( int-len int -- reversed )"
+@doc
 
-{ show-prompt
-  read
-  parse
-  .stack
-  newline
-  rp-loop } :rp-loop @
+{ over 0 =
+  { 2nip }
+  { over last-bit 1 =
+    { { chop-bit }
+      { 1 >> swap }
+      { append-bit }
+      tri*
+      bitwise-merge' }
+    { { }
+      { 1 >> }
+      { 1 << }
+      tri*
+      bitwise-merge' }
+    if
+  }
+  if
+} :bitwise-merge' @
 
-{ "~ @ orth @ ~" display newline newline
-  rp-loop
-} :start-repl @
+{ { nip integer-length }
+  { 0 bitwise-merge' }
+  2bi
+  reverse-bits
+} :bitwise-merge
+"( value mask -- )"
+@doc
 
-; start-repl
-; :dup .doc
+{ pick 0 =
+  { 2nip }
+  { { 1 - }
+    { chop-byte }
+    { { vpush! } keep }
+    tri*
+    int>bytes' }
+  if
+} :int>bytes' @
 
-{ 1 2 + } { qreverse! } keep
-{ 1 2 + } dup qreverse!
-.stack
+{ over <vec>,capacity int>bytes' { vreverse! } keep
+} :int>bytes
+"( n int -- vec )"
+@doc
+
+{ pick 0 =
+  { 2nip }
+  { { { 1 - } keep } 2dip
+    ; {
+    ;{ }
+    ;{ }
+    ;tri*
+    map' }
+  if
+} :map' @
+
+{ { dup vlen 1 - swap } dip map'
+} :map
+"( vec fn -- vec )"
+@doc

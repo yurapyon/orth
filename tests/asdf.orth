@@ -1,0 +1,93 @@
+; TODO need
+;   ffi quotations
+;   making a getter is essentially currying
+;     need to make { 0 swap vget }vget
+; { cell
+; } define-struct
+
+; [ :cell
+;   :char mut
+;   :lock immut
+; ]vec vec>struct :cell @struct
+
+; [ 1 2 3 ]vec
+; { 2 3 + }
+; "wow"
+; .stack
+; {
+; [ 1 2 :+ / ]q :q @
+; q .stack drop
+; 3    :q ref qpush!
+; :+ / :q ref qpush!
+; q .stack drop
+; 
+; :q ref
+; .stack
+; } eval
+; q .stack drop
+; 5 0 :q ref qset!
+; q .stack drop
+
+; { [ 0 #f ]vec } "<cell>" string>symbol @
+; { 0 swap vget } :cell-char @
+; { 1 swap vget } :cell-lock @
+; { 0 swap vset! } :cell-char! @
+; { 1 swap vset! } :cell-lock! @
+; 
+; <cell> { :a swap cell-char! } keep
+; .stack
+; { cell-char } { cell-lock } bi
+; .stack 2drop
+
+;"2 { + } curry :plus2 @" parse
+
+; 2 plus2 .stack
+
+{ panic
+} :exit @
+
+{ "* " display
+} :show-prompt @
+
+{ show-prompt
+  read
+  parse
+  .stack
+  newline
+  rp-loop } :rp-loop @
+
+{ "~ @ orth @ ~" display newline newline
+  rp-loop
+} :start-repl @
+
+; start-repl
+; :dup .doc
+
+{ #xff & } :last-byte @
+{ { 8 >> } { last-byte } bi } :chop-int @
+
+{ ; n int vec
+  pick 0 =
+  { 2nip }
+  { { 1 - }
+    { chop-int }
+    { { vpush! } keep }
+    tri*
+    int>bytes' }
+  if
+} :int>bytes'
+@
+
+{ over <vec>,capacity int>bytes' { vreverse! } keep
+} :int>bytes
+"( n int -- vec )"
+@doc
+
+:int>bytes' .doc
+
+8 #xdeadbeef int>bytes
+#xde
+#xad
+#xbe
+#xef
+.stack
