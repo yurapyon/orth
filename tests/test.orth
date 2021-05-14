@@ -1,90 +1,45 @@
-{ 0 ~ swap << ~
-} :gen-bitmask @
+{
+{ 0 swap rget } :record-type-type @
+{ 0 swap rset! } :record-type-type! @
+{ 1 swap rget } :record-type-name @
+{ 1 swap rset! } :record-type-name! @
+{ 2 swap rget } :record-type-slot-names @
+{ 2 swap rset! } :record-type-slot-names! @
 
-{ #x1 &
-} :last-bit @
+3 <record>
+{ { #f swap record-type-type! }
+  ; { 0 over rset! }
+  { :record-type swap record-type-name! }
+  { { :type :name :slot-names }a swap record-type-slot-names! }
+  tri
+} keep
+:(record-type) @
 
-{ { 1 >> } { last-bit } bi
-} :chop-bit @
+(record-type) .stack
 
-{ 1 << |
-} :append-bit @
+{ 3 <record>
+  { { record-type-slot-names! }
+    { record-type-name! }
+    { record-type-type! }
+    tri
+  } keep
+} :<record-type> @
 
-{ #xff &
-} :last-byte @
+(record-type) :cell { :char :lock }a <record-type> :(cell) @
+} drop
 
-{ { 8 >> } { last-byte } bi
-} :chop-byte @
+{ :char :lock }a :cell @record
 
-{ pick 0 =
-  { 2nip }
-  { { 1 - }
-    { chop-bit }
-    { append-bit }
-    tri*
-    reverse-bits'
-  }
-  if
-} :reverse-bits' @
+#f #\a make-cell
+.stack
+{ #\b swap cell-char! } keep
+.stack
+{ { cell-char } { cell-lock! } bi } keep
+.stack
 
-{ 0 reverse-bits'
-} :reverse-bits
-"( int-len int -- reversed )"
-@doc
-
-{ over 0 =
-  { 2nip }
-  { over last-bit 1 =
-    { { chop-bit }
-      { 1 >> swap }
-      { append-bit }
-      tri*
-      bitwise-merge' }
-    { { }
-      { 1 >> }
-      { 1 << }
-      tri*
-      bitwise-merge' }
-    if
-  }
-  if
-} :bitwise-merge' @
-
-{ { nip integer-length }
-  { 0 bitwise-merge' }
-  2bi
-  reverse-bits
-} :bitwise-merge
-"( value mask -- )"
-@doc
-
-{ pick 0 =
-  { 2nip }
-  { { 1 - }
-    { chop-byte }
-    { { vpush! } keep }
-    tri*
-    int>bytes' }
-  if
-} :int>bytes' @
-
-{ over <vec>,capacity int>bytes' { vreverse! } keep
-} :int>bytes
-"( n int -- vec )"
-@doc
-
-{ pick 0 =
-  { 2nip }
-  { { { 1 - } keep } 2dip
-    ; {
-    ;{ }
-    ;{ }
-    ;tri*
-    map' }
-  if
-} :map' @
-
-{ { dup vlen 1 - swap } dip map'
-} :map
-"( vec fn -- vec )"
-@doc
+type-of
+1 type-of
+1.4 type-of
+:hello type-of
+<vec> type-of
+.stack

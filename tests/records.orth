@@ -1,0 +1,38 @@
+{ lock mut
+  char immut
+}a :cell @record
+
+make-cell
+cell?
+make-cell type-of => :cell
+cell-lock
+cell-lock!
+cell-char
+
+; 3 :cell define-record-type
+; :cell? :cell define-record-predicate
+
+
+{ 0 swap rget } :record-type-type @
+{ 0 swap rset! } :record-type-type! @
+{ 1 swap rget } :record-type-name @
+{ 1 swap rset! } :record-type-name! @
+{ 2 swap rget } :record-type-field-tags @
+{ 2 swap rset! } :record-type-field-tags! @
+
+3 <record>
+{ dup record-type-type!}
+{ :record-type swap record-type-type! }
+{ { :name :field-tags }a swap record-type-field-tags! }
+tri
+:(record-type) @
+
+{ 3 <record>
+  { (record-type) swap record-type-type! }
+  { record-type-name! }
+  { record-type-field-tags! }
+  tri
+} :make-record-type @
+
+{ :lock :char }a :(cell) make-record-type :(cell) @
+

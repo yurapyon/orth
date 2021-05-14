@@ -1,0 +1,181 @@
+{ 0 ~ swap << ~
+} :gen-bitmask @
+
+{ #x1 &
+} :last-bit @
+
+{ { 1 >> } { last-bit } bi
+} :chop-bit @
+
+{ 1 << |
+} :append-bit @
+
+{ #xff &
+} :last-byte @
+
+{ { 8 >> } { last-byte } bi
+} :chop-byte @
+
+{ pick 0 =
+  { 2nip }
+  { { 1 - }
+    { chop-bit }
+    { append-bit }
+    tri*
+    reverse-bits'
+  }
+  if
+} :reverse-bits' @
+
+{ 0 reverse-bits'
+} :reverse-bits
+"( int-len int -- reversed )"
+@doc
+
+{ over 0 =
+  { 2nip }
+  { over last-bit 1 =
+    { { chop-bit }
+      { 1 >> swap }
+      { append-bit }
+      tri*
+      bitwise-merge' }
+    { { }
+      { 1 >> }
+      { 1 << }
+      tri*
+      bitwise-merge' }
+    if
+  }
+  if
+} :bitwise-merge' @
+
+{ { nip integer-length }
+  { 0 bitwise-merge' }
+  2bi
+  reverse-bits
+} :bitwise-merge
+"( value mask -- )"
+@doc
+
+{ pick 0 =
+  { 2nip }
+  { { 1 - }
+    { chop-byte }
+    { { vpush! } keep }
+    tri*
+    int>bytes' }
+  if
+} :int>bytes' @
+
+{ over <vec>,capacity int>bytes' { vreverse! } keep
+} :int>bytes
+"( n int -- vec )"
+@doc
+
+;;
+
+
+; iterator
+
+{
+{ <vec>
+  { vpush! } keep
+  { vpush! } keep
+  { vpush! } keep
+} :<iter>
+"( acc fn condition -- iter )"
+@doc
+
+{ 2 swap vget } :iter-acc @
+{ 2 swap vset! } :iter-acc! @
+{ 1 swap vget } :iter-fn @
+{ 0 swap vget } :iter-condition @
+
+{ { iter-acc dup } { iter-condition eval } bi } :iter-get @
+{ { iter-acc } { iter-fn eval } bi } :iter-next-acc @
+
+{ dup iter-get dup
+  { pick { iter-next-acc } { iter-acc! } bi
+    { drop } 2dip
+    }
+  { 3drop }
+  if
+} :next @
+
+
+0 { 1 + } { 5 <= } <iter> :i @
+0 { 1 + { 0 5 } dip wrap } { drop #t } <iter> :i @
+i next
+i next
+i next
+i next
+i next
+i next
+i next
+i next
+.stack
+} drop
+
+{ <vec>
+  { vpush! } keep
+  { vpush! } keep
+  { vpush! } keep
+  { vpush! } keep
+} :<iter>
+"( data get-fn condition-fn next-fn -- iter )"
+@doc
+
+{
+} :next @
+
+{ 3 swap vget } :iter-data @
+{ 3 swap vset! } :iter-data! @
+{ 2 swap vget } :iter-get-fn @
+{ 1 swap vget } :iter-condition-fn @
+{ 0 swap vget } :iter-next-fn @
+
+{ dup iter-condition-fn eval } :iter-check @
+{ dup iter-get-fn eval } :iter-get @
+{ dup iter-next-fn eval } :iter-next! @
+
+{ dup iter-check
+  { { iter-get } { iter-next! } bi #t }
+  { drop #f #f }
+  if
+} :next @
+
+0 { iter-data }
+  { iter-data 2 < }
+  { { iter-data 1 + } keep iter-data! }
+<iter> :i @
+
+i next
+i next
+i next
+.stack
+
+
+{ { 1 swap vget } { 0 swap vget } bi vget
+} :anim-at @
+
+
+[ [ :a :b :c ]vec 0 ]vec
+{ iter-data anim-at }
+{ drop #t }
+{ iter-data
+  { { 0 swap vget vbounds }
+    { 1 swap vget 1 + }
+    bi
+    wrap } keep
+  1 swap vset!
+  }
+<iter> :a @
+
+{ 1 2 3 4 }a
+
+a next
+a next
+a next
+a next
+.stack

@@ -17,9 +17,9 @@ pub fn something(allocator: *Allocator) !void {
     var vm = try VM.init(allocator);
     defer vm.deinit();
 
-    try vm.defineWord("#t", .{ .Boolean = true }, "boolean true");
-    try vm.defineWord("#f", .{ .Boolean = false }, "boolean false");
-    try vm.defineWord("#sentinel", .{ .Sentinel = {} }, "sentinel");
+    try vm.defineWord("#t", .{ .Boolean = true });
+    try vm.defineWord("#f", .{ .Boolean = false });
+    try vm.defineWord("#sentinel", .{ .Sentinel = {} });
 
     for (builtins.builtins) |bi| {
         const idx = try vm.internSymbol(bi.name);
@@ -31,10 +31,11 @@ pub fn something(allocator: *Allocator) !void {
         };
     }
 
-    _ = try vm.installFFI_Type(&builtins.ft_quotation.ffi_type);
-    _ = try vm.installFFI_Type(&builtins.ft_vec.ffi_type);
-    _ = try vm.installFFI_Type(&builtins.ft_string.ffi_type);
-    _ = try vm.installFFI_Type(&builtins.ft_map.ffi_type);
+    // _ = try vm.installFFI_Type(&builtins.ft_quotation.ffi_type);
+    // _ = try vm.installFFI_Type(&builtins.ft_vec.ffi_type);
+    try builtins.ft_record.install(&vm);
+    try builtins.ft_vec.install(&vm);
+    try builtins.ft_map.install(&vm);
 
     {
         var f = try readFile(allocator, "src/base.orth");

@@ -160,17 +160,45 @@
 
 ; types ==
 
-{ type-of :int eq? } :int? @
-{ type-of :float eq? } :float? @
-{ type-of :char eq? } :char? @
-{ type-of :boolean eq? } :boolean? @
-{ type-of :sentinel eq? } :sentinel? @
-{ type-of :string eq? } :string? @
-{ type-of :word eq? } :word? @
-{ type-of :symbol eq? } :symbol? @
-{ type-of :quotation eq? } :quotation-literal? @
-{ type-of :ffi-fn eq? } :ffi-fn? @
-{ type-of :ffi-ptr eq? } :ffi-ptr? @
+{ value-type-of :int eq? } :int? @
+{ value-type-of :float eq? } :float? @
+{ value-type-of :char eq? } :char? @
+{ value-type-of :boolean eq? } :boolean? @
+{ value-type-of :sentinel eq? } :sentinel? @
+{ value-type-of :string eq? } :string? @
+{ value-type-of :word eq? } :word? @
+{ value-type-of :symbol eq? } :symbol? @
+{ value-type-of :quotation eq? } :quotation-literal? @
+{ value-type-of :ffi-fn eq? } :ffi-fn? @
+{ value-type-of :ffi-ptr eq? } :ffi-ptr? @
+
+{ dup ffi-ptr?
+  { ffi-type-of :record eq? }
+  { #f }
+  if
+} :record? @
+
+{ dup ffi-ptr?
+  { ffi-type-of :vec eq? }
+  { #f }
+  if
+} :vec? @
+
+{ dup ffi-ptr?
+  { ffi-type-of :map eq? }
+  { #f }
+  if
+} :map? @
+
+{ dup ffi-ptr?
+  { dup record?
+    { record-type-of }
+    { ffi-type-of }
+    if
+    }
+  { value-type-of }
+  if
+} :type-of @
 
 ; math ==
 

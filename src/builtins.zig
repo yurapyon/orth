@@ -12,8 +12,12 @@ usingnamespace lib;
 //;
 
 // TODO need
+// dont type check?
+// self referential rc pointers need to be weak
+//   you only need words that put things in collections to worry about weak pointers
 // functions
 //   thread exit
+//   array access words
 //   functional stuff
 //     compose
 //     map function for vecs vs protos should be specialized
@@ -75,6 +79,89 @@ pub fn f_define(t: *Thread) Thread.Error!void {
     t.vm.word_table.items[name.Symbol] = value;
 }
 
+pub fn f_define_record_type(t: *Thread) Thread.Error!void {
+    const name = try t.stack.pop();
+    const fields = try t.stack.pop();
+    if (name != .Symbol) return error.TypeError;
+    if (fields != .Array) return error.TypeError;
+    for (fields.Array) |sym| {
+        if (sym != .Symbol) return error.TypeError;
+    }
+
+    const slot_ct = fields.Array.len;
+
+    const idx = t.vm.type_table.items.len;
+    try t.vm.type_table.append(.{
+        .name_id = name.Symbol,
+        .ty = .{
+            .Record = .{
+                .slot_ct = slot_ct,
+            },
+        },
+    });
+
+    const name_str = t.vm.symbol_table.items[name.Symbol];
+
+    {
+        const constructor = try std.fmt.allocPrint(t.vm.allocator, "make-{}", .{name_str});
+        defer t.vm.allocator.free(constructor);
+
+        var q = try t.vm.allocator.alloc(Value, 2 + slot_ct * 5);
+        try t.vm.quotation_literals.append(.{ .Quotation = q });
+        q[0] = .{ .Int = @intCast(i64, idx) };
+        q[1] = .{ .Word = t.vm.internSymbol("<record>") catch unreachable };
+        var i: usize = 0;
+        while (i < slot_ct) : (i += 1) {
+            q[2 + i * 5] = .{ .Word = t.vm.internSymbol("swap") catch unreachable };
+            q[3 + i * 5] = .{ .Word = t.vm.internSymbol("over") catch unreachable };
+            q[4 + i * 5] = .{ .Int = @intCast(i64, i) };
+            q[5 + i * 5] = .{ .Word = t.vm.internSymbol("swap") catch unreachable };
+            q[6 + i * 5] = .{ .Word = t.vm.internSymbol("rset!") catch unreachable };
+        }
+
+        try t.vm.defineWord(constructor, .{ .Quotation = q });
+    }
+
+    {
+        const predicate = try std.fmt.allocPrint(t.vm.allocator, "{}?", .{name_str});
+        defer t.vm.allocator.free(predicate);
+
+        var q = try t.vm.allocator.alloc(Value, 3);
+        try t.vm.quotation_literals.append(.{ .Quotation = q });
+        q[0] = .{ .Word = t.vm.internSymbol("record-type-of") catch unreachable };
+        q[1] = .{ .Symbol = name.Symbol };
+        q[2] = .{ .Word = t.vm.internSymbol("eq?") catch unreachable };
+
+        try t.vm.defineWord(predicate, .{ .Quotation = q });
+    }
+
+    {
+        for (fields.Array) |sym, i| {
+            const field_str = t.vm.symbol_table.items[sym.Symbol];
+
+            const getter = try std.fmt.allocPrint(t.vm.allocator, "{}-{}", .{ name_str, field_str });
+            defer t.vm.allocator.free(getter);
+            const setter = try std.fmt.allocPrint(t.vm.allocator, "{}-{}!", .{ name_str, field_str });
+            defer t.vm.allocator.free(setter);
+
+            var q_get = try t.vm.allocator.alloc(Value, 3);
+            try t.vm.quotation_literals.append(.{ .Quotation = q_get });
+            q_get[0] = .{ .Int = @intCast(i64, i) };
+            q_get[1] = .{ .Word = t.vm.internSymbol("swap") catch unreachable };
+            q_get[2] = .{ .Word = t.vm.internSymbol("rget") catch unreachable };
+            try t.vm.defineWord(getter, .{ .Quotation = q_get });
+
+            var q_set = try t.vm.allocator.alloc(Value, 3);
+            try t.vm.quotation_literals.append(.{ .Quotation = q_set });
+            q_set[0] = .{ .Int = @intCast(i64, i) };
+            q_set[1] = .{ .Word = t.vm.internSymbol("swap") catch unreachable };
+            q_set[2] = .{ .Word = t.vm.internSymbol("rset!") catch unreachable };
+            try t.vm.defineWord(setter, .{ .Quotation = q_set });
+        }
+    }
+}
+
+// TODO ref should return a result type
 pub fn f_ref(t: *Thread) Thread.Error!void {
     const name = try t.stack.pop();
     if (name != .Symbol) return error.TypeError;
@@ -141,8 +228,16 @@ fn displayValue(t: *Thread, value: Value) void {
             }
             std.debug.print("}}", .{});
         },
+        .Array => |a| {
+            std.debug.print("{{ ", .{});
+            for (a) |val| {
+                displayValue(t, val);
+                std.debug.print(" ", .{});
+            }
+            std.debug.print("}}a", .{});
+        },
         .FFI_Fn => |val| std.debug.print("fn({})", .{t.vm.symbol_table.items[val.name]}),
-        .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].display_fn(t, ptr),
+        .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.display_fn(t, ptr),
     }
 }
 
@@ -187,7 +282,7 @@ pub fn f_parse(t: *Thread) Thread.Error!void {
 
 // built in types ===
 
-pub fn f_type_of(t: *Thread) Thread.Error!void {
+pub fn f_value_type_of(t: *Thread) Thread.Error!void {
     const val = try t.stack.pop();
     const id: VM.BuiltInIds = switch (val) {
         .Int => .Int,
@@ -199,6 +294,7 @@ pub fn f_type_of(t: *Thread) Thread.Error!void {
         .Word => .Word,
         .Symbol => .Symbol,
         .Quotation => .Quotation,
+        .Array => .Array,
         .FFI_Fn => .FFI_Fn,
         .FFI_Ptr => .FFI_Ptr,
     };
@@ -480,6 +576,8 @@ fn areValuesEqual(a: Value, b: Value) bool {
         .Symbol => |val| val == b.Symbol,
         .Quotation => |val| val.ptr == b.Quotation.ptr and
             val.len == b.Quotation.len,
+        .Array => |val| val.ptr == b.Array.ptr and
+            val.len == b.Array.len,
         .FFI_Fn => |ptr| ptr.name == b.FFI_Fn.name and
             ptr.func == b.FFI_Fn.func,
         .FFI_Ptr => |ptr| ptr.type_id == b.FFI_Ptr.type_id and
@@ -516,7 +614,13 @@ fn areValuesEquivalent(t: *Thread, a: Value, b: Value) bool {
             }
             break :blk true;
         },
-        .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].equivalent_fn(t, ptr, b),
+        .Array => |val| blk: {
+            for (val) |v, i| {
+                if (!areValuesEquivalent(t, v, b.Array[i])) break :blk false;
+            }
+            break :blk true;
+        },
+        .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.equivalent_fn(t, ptr, b),
     } else blk: {
         // TODO
         break :blk false;
@@ -690,190 +794,321 @@ pub fn Rc(comptime T: type) type {
 
 // string ===
 
-pub const ft_string = struct {
-    const Self = @This();
-
-    pub var ffi_type = FFI_Type{
-        .name = "ffi-string",
-        .display_fn = display,
-        .dup_fn = dup,
-        .drop_fn = drop,
-    };
-
-    pub fn display(t: *Thread, ptr: FFI_Ptr) void {
-        const rc = ptr.cast(Rc(ArrayList(u8)));
-        std.debug.print("\"{}\"", .{rc.obj.items});
-    }
-
-    pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
-        var rc = ptr.cast(Rc(ArrayList(u8)));
-        rc.inc();
-        return Self.ffi_type.makePtr(rc);
-    }
-
-    pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
-        var rc = ptr.cast(Rc(ArrayList(u8)));
-        if (!rc.dec()) {
-            rc.obj.deinit();
-            vm.allocator.destroy(rc);
-        }
-    }
-
-    //;
-
-    fn makeRcFromSlice(allocator: *Allocator, slice: []const u8) Allocator.Error!*Rc(ArrayList(u8)) {
-        var rc = try Rc(ArrayList(u8)).makeOne(allocator);
-        rc.obj = ArrayList(u8).init(allocator);
-        try rc.obj.appendSlice(slice);
-        return rc;
-    }
-
-    pub fn _make(t: *Thread) Thread.Error!void {
-        var rc = try Rc(ArrayList(u8)).makeOne(t.vm.allocator);
-        rc.obj = ArrayList(u8).init(t.vm.allocator);
-        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
-    }
-
-    pub fn _clone(t: *Thread) Thread.Error!void {
-        const other = try t.stack.pop();
-        switch (other) {
-            .String => |str| {
-                var rc = try makeRcFromSlice(t.vm.allocator, str);
-                try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
-            },
-            .FFI_Ptr => |ptr| {
-                try Self.ffi_type.checkType(ptr);
-
-                var other_rc = ptr.cast(Rc(ArrayList(u8)));
-                var rc = try makeRcFromSlice(t.vm.allocator, other_rc.obj.items);
-
-                try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
-
-                t.vm.dropValue(other);
-            },
-            else => return error.TypeError,
-        }
-    }
-
-    pub fn _append_in_place(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        const other = try t.stack.pop();
-        if (other != .String and other != .FFI_Ptr) return error.TypeError;
-        if (other == .FFI_Ptr) {
-            try Self.ffi_type.checkType(other.FFI_Ptr);
-        }
-
-        const rc = switch (this) {
-            .String => |str| try makeRcFromSlice(t.vm.allocator, str),
-            .FFI_Ptr => |ptr| blk: {
-                try Self.ffi_type.checkType(ptr);
-                break :blk ptr.cast(Rc(ArrayList(u8)));
-            },
-            else => return error.TypeError,
-        };
-
-        switch (other) {
-            .String => |o_str| try rc.obj.appendSlice(o_str),
-            .FFI_Ptr => |o_ptr| {
-                const o_str = o_ptr.cast(Rc(ArrayList(u8))).obj.items;
-                try rc.obj.appendSlice(o_str);
-            },
-            else => unreachable,
-        }
-
-        rc.inc();
-        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
-
-        t.vm.dropValue(this);
-        t.vm.dropValue(other);
-    }
-
-    pub fn _to_symbol(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        const str = switch (this) {
-            .String => |str| str,
-            .FFI_Ptr => |ptr| blk: {
-                try Self.ffi_type.checkType(ptr);
-                break :blk ptr.cast(Rc(ArrayList(u8))).obj.items;
-            },
-            else => return error.TypeError,
-        };
-        try t.stack.push(.{ .Symbol = try t.vm.internSymbol(str) });
-        t.vm.dropValue(this);
-    }
-};
-
+// pub const ft_string = struct {
+//     const Self = @This();
+//
+//     //     pub var ffi_type = FFI_Type{
+//     //         .name = "ffi-string",
+//     //         .display_fn = display,
+//     //         .dup_fn = dup,
+//     //         .drop_fn = drop,
+//     //     };
+//
+//     pub fn display(t: *Thread, ptr: FFI_Ptr) void {
+//         const rc = ptr.cast(Rc(ArrayList(u8)));
+//         std.debug.print("\"{}\"", .{rc.obj.items});
+//     }
+//
+//     pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
+//         var rc = ptr.cast(Rc(ArrayList(u8)));
+//         rc.inc();
+//         return Self.ffi_type.makePtr(rc);
+//     }
+//
+//     pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
+//         var rc = ptr.cast(Rc(ArrayList(u8)));
+//         if (!rc.dec()) {
+//             rc.obj.deinit();
+//             vm.allocator.destroy(rc);
+//         }
+//     }
+//
+//     //;
+//
+//     fn makeRcFromSlice(allocator: *Allocator, slice: []const u8) Allocator.Error!*Rc(ArrayList(u8)) {
+//         var rc = try Rc(ArrayList(u8)).makeOne(allocator);
+//         rc.obj = ArrayList(u8).init(allocator);
+//         try rc.obj.appendSlice(slice);
+//         return rc;
+//     }
+//
+//     pub fn _make(t: *Thread) Thread.Error!void {
+//         var rc = try Rc(ArrayList(u8)).makeOne(t.vm.allocator);
+//         rc.obj = ArrayList(u8).init(t.vm.allocator);
+//         try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+//     }
+//
+//     pub fn _clone(t: *Thread) Thread.Error!void {
+//         const other = try t.stack.pop();
+//         switch (other) {
+//             .String => |str| {
+//                 var rc = try makeRcFromSlice(t.vm.allocator, str);
+//                 try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+//             },
+//             .FFI_Ptr => |ptr| {
+//                 try Self.ffi_type.checkType(ptr);
+//
+//                 var other_rc = ptr.cast(Rc(ArrayList(u8)));
+//                 var rc = try makeRcFromSlice(t.vm.allocator, other_rc.obj.items);
+//
+//                 try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+//
+//                 t.vm.dropValue(other);
+//             },
+//             else => return error.TypeError,
+//         }
+//     }
+//
+//     pub fn _append_in_place(t: *Thread) Thread.Error!void {
+//         const this = try t.stack.pop();
+//         const other = try t.stack.pop();
+//         if (other != .String and other != .FFI_Ptr) return error.TypeError;
+//         if (other == .FFI_Ptr) {
+//             try Self.ffi_type.checkType(other.FFI_Ptr);
+//         }
+//
+//         const rc = switch (this) {
+//             .String => |str| try makeRcFromSlice(t.vm.allocator, str),
+//             .FFI_Ptr => |ptr| blk: {
+//                 try Self.ffi_type.checkType(ptr);
+//                 break :blk ptr.cast(Rc(ArrayList(u8)));
+//             },
+//             else => return error.TypeError,
+//         };
+//
+//         switch (other) {
+//             .String => |o_str| try rc.obj.appendSlice(o_str),
+//             .FFI_Ptr => |o_ptr| {
+//                 const o_str = o_ptr.cast(Rc(ArrayList(u8))).obj.items;
+//                 try rc.obj.appendSlice(o_str);
+//             },
+//             else => unreachable,
+//         }
+//
+//         rc.inc();
+//         try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+//
+//         t.vm.dropValue(this);
+//         t.vm.dropValue(other);
+//     }
+//
+//     pub fn _to_symbol(t: *Thread) Thread.Error!void {
+//         const this = try t.stack.pop();
+//         const str = switch (this) {
+//             .String => |str| str,
+//             .FFI_Ptr => |ptr| blk: {
+//                 try Self.ffi_type.checkType(ptr);
+//                 break :blk ptr.cast(Rc(ArrayList(u8))).obj.items;
+//             },
+//             else => return error.TypeError,
+//         };
+//         try t.stack.push(.{ .Symbol = try t.vm.internSymbol(str) });
+//         t.vm.dropValue(this);
+//     }
+// };
+//
 // quotation ===
 
-pub const ft_quotation = struct {
+// pub const ft_quotation = struct {
+//     const Self = @This();
+//
+//     //     pub var ffi_type = FFI_Type{
+//     //         .name = "ffi-quotation",
+//     //         .call_fn = call,
+//     //         .display_fn = display,
+//     //         .dup_fn = dup,
+//     //         .drop_fn = drop,
+//     //     };
+//
+//     pub fn call(t: *Thread, ptr: FFI_Ptr) []const Value {
+//         const rc = ptr.cast(Rc(ArrayList(Value)));
+//         return rc.obj.items;
+//     }
+//
+//     pub fn display(t: *Thread, ptr: FFI_Ptr) void {
+//         const rc = ptr.cast(Rc(ArrayList(Value)));
+//         std.debug.print("q{{ ", .{});
+//         for (rc.obj.items) |v| {
+//             t.nicePrintValue(v);
+//             std.debug.print(" ", .{});
+//         }
+//         std.debug.print("}}", .{});
+//     }
+//
+//     pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
+//         var rc = ptr.cast(Rc(ArrayList(Value)));
+//         rc.inc();
+//         return Self.ffi_type.makePtr(rc);
+//     }
+//
+//     pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
+//         var rc = ptr.cast(Rc(ArrayList(Value)));
+//         if (!rc.dec()) {
+//             for (rc.obj.items) |val| {
+//                 vm.dropValue(val);
+//             }
+//             rc.obj.deinit();
+//             vm.allocator.destroy(rc);
+//         }
+//     }
+//
+//     //;
+//
+//     pub fn _to_vec(t: *Thread) Thread.Error!void {
+//         const this = try t.stack.pop();
+//         switch (this) {
+//             .Quotation => |q| {
+//                 var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
+//                 rc.obj = ArrayList(Value).init(t.vm.allocator);
+//                 try rc.obj.appendSlice(q);
+//                 try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(rc) });
+//             },
+//             .FFI_Ptr => |ptr| {
+//                 try Self.ffi_type.checkType(ptr);
+//                 var this_rc = ptr.cast(Rc(ArrayList(Value)));
+//                 if (this_rc.ref_ct == 1) {
+//                     try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(this_rc) });
+//                 } else {
+//                     var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
+//                     rc.obj = ArrayList(Value).init(t.vm.allocator);
+//                     try rc.obj.appendSlice(this_rc.obj.items);
+//                     try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(rc) });
+//                     t.vm.dropValue(this);
+//                 }
+//             },
+//             else => return error.TypeError,
+//         }
+//     }
+// };
+//
+
+// record ===
+
+pub const ft_record = struct {
     const Self = @This();
 
-    pub var ffi_type = FFI_Type{
-        .name = "ffi-quotation",
-        .call_fn = call,
-        .display_fn = display,
-        .dup_fn = dup,
-        .drop_fn = drop,
+    pub const Record = struct {
+        type_id: usize,
+        slots: []Value,
     };
 
-    pub fn call(t: *Thread, ptr: FFI_Ptr) []const Value {
-        const rc = ptr.cast(Rc(ArrayList(Value)));
-        return rc.obj.items;
+    pub var type_id: usize = undefined;
+
+    pub fn install(vm: *VM) Allocator.Error!void {
+        type_id = try vm.installType("record", .{
+            .ty = .{
+                .FFI = .{
+                    .display_fn = display,
+                    .dup_fn = dup,
+                    .drop_fn = drop,
+                },
+            },
+        });
     }
 
     pub fn display(t: *Thread, ptr: FFI_Ptr) void {
-        const rc = ptr.cast(Rc(ArrayList(Value)));
-        std.debug.print("q{{ ", .{});
-        for (rc.obj.items) |v| {
+        const rc = ptr.cast(Rc(Record));
+        std.debug.print("r< ", .{});
+        for (rc.obj.slots) |v| {
             t.nicePrintValue(v);
             std.debug.print(" ", .{});
         }
-        std.debug.print("}}", .{});
+        std.debug.print(">", .{});
     }
 
     pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
-        var rc = ptr.cast(Rc(ArrayList(Value)));
+        var rc = ptr.cast(Rc(Record));
         rc.inc();
-        return Self.ffi_type.makePtr(rc);
+        return .{
+            .type_id = type_id,
+            .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+        };
     }
 
     pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
-        var rc = ptr.cast(Rc(ArrayList(Value)));
+        var rc = ptr.cast(Rc(Record));
         if (!rc.dec()) {
-            for (rc.obj.items) |val| {
+            for (rc.obj.slots) |val| {
                 vm.dropValue(val);
             }
-            rc.obj.deinit();
+            vm.allocator.free(rc.obj.slots);
             vm.allocator.destroy(rc);
         }
     }
 
     //;
 
-    pub fn _to_vec(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        switch (this) {
-            .Quotation => |q| {
-                var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
-                rc.obj = ArrayList(Value).init(t.vm.allocator);
-                try rc.obj.appendSlice(q);
-                try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(rc) });
-            },
-            .FFI_Ptr => |ptr| {
-                try Self.ffi_type.checkType(ptr);
-                var this_rc = ptr.cast(Rc(ArrayList(Value)));
-                if (this_rc.ref_ct == 1) {
-                    try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(this_rc) });
-                } else {
-                    var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
-                    rc.obj = ArrayList(Value).init(t.vm.allocator);
-                    try rc.obj.appendSlice(this_rc.obj.items);
-                    try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(rc) });
-                    t.vm.dropValue(this);
-                }
-            },
-            else => return error.TypeError,
+    pub fn _make(t: *Thread) Thread.Error!void {
+        const r_type = try t.stack.pop();
+        if (r_type != .Int) return error.TypeError;
+
+        const slot_ct = t.vm.type_table.items[@intCast(usize, r_type.Int)].ty.Record.slot_ct;
+
+        var rc = try Rc(Record).makeOne(t.vm.allocator);
+        rc.obj.type_id = @intCast(usize, r_type.Int);
+        rc.obj.slots = try t.vm.allocator.alloc(Value, slot_ct);
+        for (rc.obj.slots) |*v| {
+            v.* = .{ .Boolean = false };
         }
+        try t.stack.push(.{
+            .FFI_Ptr = .{
+                .type_id = type_id,
+                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+            },
+        });
+    }
+
+    pub fn _set(t: *Thread) Thread.Error!void {
+        const ptr = try t.stack.pop();
+        const idx = try t.stack.pop();
+        const val = try t.stack.pop();
+        if (ptr != .FFI_Ptr) return error.TypeError;
+        if (ptr.FFI_Ptr.type_id != type_id) return error.TypeError;
+        if (idx != .Int) return error.TypeError;
+
+        var rc = ptr.FFI_Ptr.cast(Rc(Record));
+        rc.obj.slots[@intCast(usize, idx.Int)] = val;
+
+        t.vm.dropValue(ptr);
+    }
+
+    pub fn _set_weak(t: *Thread) Thread.Error!void {
+        // TODO
+        //         const ptr = try t.stack.pop();
+        //         const idx = try t.stack.pop();
+        //         const val = try t.stack.pop();
+        //         if (ptr != .FFI_Ptr) return error.TypeError;
+        //         if (ptr.FFI_Ptr.type_id != type_id) return error.TypeError;
+        //         if (idx != .Int) return error.TypeError;
+        //
+        //         var rc = ptr.FFI_Ptr.cast(Rc(Record));
+        //         rc.obj.slots[@intCast(usize, idx.Int)] = val;
+        //
+        //         t.vm.dropValue(ptr);
+    }
+
+    pub fn _get(t: *Thread) Thread.Error!void {
+        const ptr = try t.stack.pop();
+        const idx = try t.stack.pop();
+        if (ptr != .FFI_Ptr) return error.TypeError;
+        if (ptr.FFI_Ptr.type_id != type_id) return error.TypeError;
+        if (idx != .Int) return error.TypeError;
+
+        var rc = ptr.FFI_Ptr.cast(Rc(Record));
+        try t.stack.push(t.vm.dupValue(rc.obj.slots[@intCast(usize, idx.Int)]));
+
+        t.vm.dropValue(ptr);
+    }
+
+    pub fn _type_of(t: *Thread) Thread.Error!void {
+        const ptr = try t.stack.pop();
+        if (ptr != .FFI_Ptr) return error.TypeError;
+        if (ptr.FFI_Ptr.type_id != type_id) return error.TypeError;
+
+        var rc = ptr.FFI_Ptr.cast(Rc(Record));
+        try t.stack.push(.{ .Symbol = t.vm.type_table.items[rc.obj.type_id].name_id });
+
+        t.vm.dropValue(ptr);
     }
 };
 
@@ -884,15 +1119,24 @@ pub const ft_quotation = struct {
 pub const ft_vec = struct {
     const Self = @This();
 
-    pub var ffi_type = FFI_Type{
-        .name = "vec",
-        .display_fn = display,
-        .dup_fn = dup,
-        .drop_fn = drop,
-    };
+    pub const Vec = ArrayList(Value);
+
+    pub var type_id: usize = undefined;
+
+    pub fn install(vm: *VM) Allocator.Error!void {
+        type_id = try vm.installType("vec", .{
+            .ty = .{
+                .FFI = .{
+                    .display_fn = display,
+                    .dup_fn = dup,
+                    .drop_fn = drop,
+                },
+            },
+        });
+    }
 
     pub fn display(t: *Thread, ptr: FFI_Ptr) void {
-        const rc = ptr.cast(Rc(ArrayList(Value)));
+        const rc = ptr.cast(Rc(Vec));
         std.debug.print("v[ ", .{});
         for (rc.obj.items) |v| {
             t.nicePrintValue(v);
@@ -902,13 +1146,16 @@ pub const ft_vec = struct {
     }
 
     pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
-        var rc = ptr.cast(Rc(ArrayList(Value)));
+        var rc = ptr.cast(Rc(Vec));
         rc.inc();
-        return Self.ffi_type.makePtr(rc);
+        return .{
+            .type_id = type_id,
+            .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+        };
     }
 
     pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
-        var rc = ptr.cast(Rc(ArrayList(Value)));
+        var rc = ptr.cast(Rc(Vec));
         if (!rc.dec()) {
             for (rc.obj.items) |val| {
                 vm.dropValue(val);
@@ -920,53 +1167,63 @@ pub const ft_vec = struct {
 
     //;
 
-    // TODO all of these things need to be refactored if i wana reuse them for quotations
     pub fn _make(t: *Thread) Thread.Error!void {
-        var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
-        rc.obj = ArrayList(Value).init(t.vm.allocator);
-        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+        var rc = try Rc(Vec).makeOne(t.vm.allocator);
+        rc.obj = Vec.init(t.vm.allocator);
+        try t.stack.push(.{
+            .FFI_Ptr = .{
+                .type_id = type_id,
+                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+            },
+        });
     }
 
     pub fn _make_capacity(t: *Thread) Thread.Error!void {
         const capacity = try t.stack.pop();
         if (capacity != .Int) return error.TypeError;
 
-        var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
-        rc.obj = try ArrayList(Value).initCapacity(
+        var rc = try Rc(Vec).makeOne(t.vm.allocator);
+        rc.obj = try Vec.initCapacity(
             t.vm.allocator,
             @intCast(usize, capacity.Int),
         );
 
-        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+        try t.stack.push(.{
+            .FFI_Ptr = .{
+                .type_id = type_id,
+                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+            },
+        });
     }
 
     pub fn _to_quotation(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        switch (this) {
-            .FFI_Ptr => |ptr| {
-                try Self.ffi_type.checkType(ptr);
-                var this_rc = ptr.cast(Rc(ArrayList(Value)));
-                if (this_rc.ref_ct == 1) {
-                    try t.stack.push(.{ .FFI_Ptr = ft_quotation.ffi_type.makePtr(this_rc) });
-                } else {
-                    var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
-                    rc.obj = ArrayList(Value).init(t.vm.allocator);
-                    try rc.obj.appendSlice(this_rc.obj.items);
-                    try t.stack.push(.{ .FFI_Ptr = ft_quotation.ffi_type.makePtr(rc) });
-                    t.vm.dropValue(this);
-                }
-            },
-            else => return error.TypeError,
-        }
+        // TODO
+        //         const this = try t.stack.pop();
+        //         switch (this) {
+        //             .FFI_Ptr => |ptr| {
+        //                 try Self.ffi_type.checkType(ptr);
+        //                 var this_rc = ptr.cast(Rc(Vec));
+        //                 if (this_rc.ref_ct == 1) {
+        //                     try t.stack.push(.{ .FFI_Ptr = ft_quotation.ffi_type.makePtr(this_rc) });
+        //                 } else {
+        //                     var rc = try Rc(Vec).makeOne(t.vm.allocator);
+        //                     rc.obj = Vec.init(t.vm.allocator);
+        //                     try rc.obj.appendSlice(this_rc.obj.items);
+        //                     try t.stack.push(.{ .FFI_Ptr = ft_quotation.ffi_type.makePtr(rc) });
+        //                     t.vm.dropValue(this);
+        //                 }
+        //             },
+        //             else => return error.TypeError,
+        //         }
     }
 
     pub fn _push(t: *Thread) Thread.Error!void {
         const ptr = try t.stack.pop();
         const val = try t.stack.pop();
         if (ptr != .FFI_Ptr) return error.TypeError;
-        try Self.ffi_type.checkType(ptr.FFI_Ptr);
+        if (ptr.FFI_Ptr.type_id != type_id) return error.TypeError;
 
-        var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
+        var rc = ptr.FFI_Ptr.cast(Rc(Vec));
         try rc.obj.append(val);
 
         t.vm.dropValue(ptr);
@@ -977,10 +1234,11 @@ pub const ft_vec = struct {
         const idx = try t.stack.pop();
         const val = try t.stack.pop();
         if (ptr != .FFI_Ptr) return error.TypeError;
-        try Self.ffi_type.checkType(ptr.FFI_Ptr);
+        if (ptr.FFI_Ptr.type_id != type_id) return error.TypeError;
         if (idx != .Int) return error.TypeError;
 
-        var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
+        var rc = ptr.FFI_Ptr.cast(Rc(Vec));
+        // TODO shouldnt be dup
         rc.obj.items[@intCast(usize, idx.Int)] = t.vm.dupValue(val);
 
         t.vm.dropValue(ptr);
@@ -990,10 +1248,10 @@ pub const ft_vec = struct {
         const ptr = try t.stack.pop();
         const idx = try t.stack.pop();
         if (ptr != .FFI_Ptr) return error.TypeError;
-        try Self.ffi_type.checkType(ptr.FFI_Ptr);
+        if (ptr.FFI_Ptr.type_id != type_id) return error.TypeError;
         if (idx != .Int) return error.TypeError;
 
-        var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
+        var rc = ptr.FFI_Ptr.cast(Rc(Vec));
         try t.stack.push(t.vm.dupValue(rc.obj.items[@intCast(usize, idx.Int)]));
 
         t.vm.dropValue(ptr);
@@ -1001,32 +1259,20 @@ pub const ft_vec = struct {
 
     pub fn _len(t: *Thread) Thread.Error!void {
         const ptr = try t.stack.pop();
-        if (ptr != .FFI_Ptr) return error.TypeError;
-        try Self.ffi_type.checkType(ptr.FFI_Ptr);
+        if (ptr.FFI_Ptr.type_id != type_id) return error.TypeError;
 
-        var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
+        var rc = ptr.FFI_Ptr.cast(Rc(Vec));
         try t.stack.push(.{ .Int = @intCast(i32, rc.obj.items.len) });
 
         t.vm.dropValue(ptr);
     }
 
-    pub fn _map_in_place(t: *Thread) Thread.Error!void {
-        //         const ptr = try vm.stack.pop();
-        //         if (ptr != .FFI_Ptr) return error.TypeError;
-        //         try Self.ffi_type.checkType(ptr.FFI_Ptr);
-        //
-        //         var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
-        //         std.mem.reverse(Value, rc.obj.items);
-        //
-        //         vm.dropValue(ptr);
-    }
-
     pub fn _reverse_in_place(t: *Thread) Thread.Error!void {
         const ptr = try t.stack.pop();
         if (ptr != .FFI_Ptr) return error.TypeError;
-        try Self.ffi_type.checkType(ptr.FFI_Ptr);
+        if (ptr.FFI_Ptr.type_id != type_id) return error.TypeError;
 
-        var rc = ptr.FFI_Ptr.cast(Rc(ArrayList(Value)));
+        var rc = ptr.FFI_Ptr.cast(Rc(Vec));
         std.mem.reverse(Value, rc.obj.items);
 
         t.vm.dropValue(ptr);
@@ -1046,12 +1292,19 @@ pub const ft_map = struct {
 
     pub const Map = std.AutoHashMap(usize, Value);
 
-    pub var ffi_type = FFI_Type{
-        .name = "map",
-        .display_fn = display,
-        .dup_fn = dup,
-        .drop_fn = drop,
-    };
+    pub var type_id: usize = undefined;
+
+    pub fn install(vm: *VM) Allocator.Error!void {
+        type_id = try vm.installType("map", .{
+            .ty = .{
+                .FFI = .{
+                    .display_fn = display,
+                    .dup_fn = dup,
+                    .drop_fn = drop,
+                },
+            },
+        });
+    }
 
     pub fn display(t: *Thread, ptr: FFI_Ptr) void {
         const rc = ptr.cast(Rc(Map));
@@ -1068,7 +1321,10 @@ pub const ft_map = struct {
     pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
         var rc = ptr.cast(Rc(Map));
         rc.inc();
-        return Self.ffi_type.makePtr(rc);
+        return .{
+            .type_id = type_id,
+            .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+        };
     }
 
     pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
@@ -1083,22 +1339,27 @@ pub const ft_map = struct {
         }
     }
 
+    //;
+
     pub fn _make(t: *Thread) Thread.Error!void {
         var rc = try Rc(Map).makeOne(t.vm.allocator);
         errdefer t.vm.allocator.destroy(rc);
         rc.obj = Map.init(t.vm.allocator);
-        try t.stack.push(.{ .FFI_Ptr = Self.ffi_type.makePtr(rc) });
+        try t.stack.push(.{
+            .FFI_Ptr = .{
+                .type_id = type_id,
+                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+            },
+        });
     }
 
-    //     //;
-    //
     pub fn _set(t: *Thread) Thread.Error!void {
         const map = try t.stack.pop();
         const sym = try t.stack.pop();
         const value = try t.stack.pop();
         if (sym != .Symbol) return error.TypeError;
         if (map != .FFI_Ptr) return error.TypeError;
-        try Self.ffi_type.checkType(map.FFI_Ptr);
+        if (map.FFI_Ptr.type_id != type_id) return error.TypeError;
 
         var rc = map.FFI_Ptr.cast(Rc(Map));
 
@@ -1113,7 +1374,7 @@ pub const ft_map = struct {
         const sym = try t.stack.pop();
         if (sym != .Symbol) return error.TypeError;
         if (map != .FFI_Ptr) return error.TypeError;
-        try Self.ffi_type.checkType(map.FFI_Ptr);
+        if (map.FFI_Ptr.type_id != type_id) return error.TypeError;
 
         var rc = map.FFI_Ptr.cast(Rc(Map));
 
@@ -1142,6 +1403,10 @@ pub const builtins = [_]struct {
     .{
         .name = "@",
         .func = f_define,
+    },
+    .{
+        .name = "@record",
+        .func = f_define_record_type,
     },
     .{
         .name = "ref",
@@ -1179,8 +1444,8 @@ pub const builtins = [_]struct {
     },
 
     .{
-        .name = "type-of",
-        .func = f_type_of,
+        .name = "value-type-of",
+        .func = f_value_type_of,
     },
     .{
         .name = "ffi-type-of",
@@ -1357,26 +1622,43 @@ pub const builtins = [_]struct {
         .func = f_dip,
     },
 
+    //     .{
+    //         .name = "<string>",
+    //         .func = ft_string._make,
+    //     },
+    //     .{
+    //         .name = "<string>,clone",
+    //         .func = ft_string._clone,
+    //     },
+    //     .{
+    //         .name = "string-append!",
+    //         .func = ft_string._append_in_place,
+    //     },
+    //     .{
+    //         .name = "string>symbol",
+    //         .func = ft_string._to_symbol,
+    //     },
+    //
+    //     .{
+    //         .name = "quotation>vec",
+    //         .func = ft_quotation._to_vec,
+    //     },
+    //
     .{
-        .name = "<string>",
-        .func = ft_string._make,
+        .name = "<record>",
+        .func = ft_record._make,
     },
     .{
-        .name = "<string>,clone",
-        .func = ft_string._clone,
+        .name = "record-type-of",
+        .func = ft_record._type_of,
     },
     .{
-        .name = "string-append!",
-        .func = ft_string._append_in_place,
+        .name = "rset!",
+        .func = ft_record._set,
     },
     .{
-        .name = "string>symbol",
-        .func = ft_string._to_symbol,
-    },
-
-    .{
-        .name = "quotation>vec",
-        .func = ft_quotation._to_vec,
+        .name = "rget",
+        .func = ft_record._get,
     },
 
     .{
@@ -1396,20 +1678,16 @@ pub const builtins = [_]struct {
         .func = ft_vec._push,
     },
     .{
-        .name = "vget",
-        .func = ft_vec._get,
-    },
-    .{
         .name = "vset!",
         .func = ft_vec._set,
     },
     .{
-        .name = "vlen",
-        .func = ft_vec._len,
+        .name = "vget",
+        .func = ft_vec._get,
     },
     .{
-        .name = "vmap!",
-        .func = ft_vec._map_in_place,
+        .name = "vlen",
+        .func = ft_vec._len,
     },
     .{
         .name = "vreverse!",

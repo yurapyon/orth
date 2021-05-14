@@ -34,11 +34,6 @@ const ArrayList = std.ArrayList;
 //     unicode chars
 //     string_indent need to be updated
 
-// records are vectors
-//   u wont get the same level of type checking
-//   but if you can generate symbols and quotations at runtime
-//     records can easily be made
-
 // TODO need
 // error reporting
 //   use error_info
@@ -59,6 +54,23 @@ const ArrayList = std.ArrayList;
 //   ref or symbol>word would be the way to get callables on the stack
 //   should ffi_fns evaluate on read
 //   quotation literals dont evaluate on read and shouldnt
+// quotations literals used as arrays
+// types
+//   all types in the same id space
+//   interfaces
+//     1. associate data with types, ie vtables
+//     2. use trait objects
+//     i.e. iterators/next
+//       rather than trait objects, next could expect that a vtable is on the stack
+//       obj vtable next
+//   iterators
+//   builtin rc-ptr vs raw-ptr ?
+//     could make it so ffi-fns work on both rc and raw ptrs
+
+// make records in orth
+//   worry about callability, display and eqv
+//   weak ptrs
+//   auto generate doc strings
 
 // TODO want
 // repl
@@ -317,7 +329,7 @@ pub const Tokenizer = struct {
     }
 
     pub fn charIsWordValid(ch: u8) bool {
-        return ch != '"' and ch != ':' and ch != '{' and ch != '}';
+        return ch != '"' and ch != ':';
     }
 
     pub fn parseCharEscape(str: []const u8) Error!u8 {
@@ -368,6 +380,7 @@ pub const Tokenizer = struct {
                         },
                         '#' => .MaybeInEscape,
                         ':' => .InSymbol,
+                        // TODO check isCharWordValid
                         else => .InWord,
                     };
                     self.start_char = self.end_char - 1;
@@ -545,28 +558,33 @@ pub const Value = union(enum) {
     Word: usize,
     Symbol: usize,
     Quotation: []const Value,
+    Array: []const Value,
     FFI_Fn: FFI_Fn,
     FFI_Ptr: FFI_Ptr,
 };
 
 //;
 
-pub const FFI_Type = struct {
-    const Self = @This();
+pub const RecordType = struct {
+    // TODO keep slot names
+    slot_ct: usize,
+    // call_fn: ?Value = null,
+    // display_fn: Value,
+    // equivalent_fn: Value,
+};
 
-    name: []const u8 = "ffi",
+pub const FFI_Type = struct {
     call_fn: ?fn (*Thread, FFI_Ptr) []const Value = null,
     display_fn: fn (*Thread, FFI_Ptr) void = defaultDisplay,
     equivalent_fn: fn (*Thread, FFI_Ptr, Value) bool = defaultEquivalent,
+    // TODO can this throw errors
     dup_fn: fn (*VM, FFI_Ptr) FFI_Ptr = defaultDup,
     drop_fn: fn (*VM, FFI_Ptr) void = defaultDrop,
 
-    name_id: usize = undefined,
-    type_id: usize = undefined,
-
     fn defaultDisplay(t: *Thread, ptr: FFI_Ptr) void {
+        const name_id = t.vm.type_table.items[ptr.type_id].name_id;
         std.debug.print("*<{} {}>", .{
-            t.vm.type_table.items[ptr.type_id].name,
+            t.vm.symbol_table.items[name_id],
             ptr.ptr,
         });
     }
@@ -580,22 +598,66 @@ pub const FFI_Type = struct {
     }
 
     fn defaultDrop(t: *VM, ptr: FFI_Ptr) void {}
-
-    //;
-
-    pub fn makePtr(self: Self, ptr: anytype) FFI_Ptr {
-        return .{
-            .type_id = self.type_id,
-            .ptr = @ptrCast(*FFI_Ptr.Ptr, ptr),
-        };
-    }
-
-    pub fn checkType(self: Self, ptr: FFI_Ptr) Thread.Error!void {
-        if (ptr.type_id != self.type_id) {
-            return error.TypeError;
-        }
-    }
 };
+
+pub const OrthType = struct {
+    pub const Type = union(enum) {
+        Primitive,
+        Record: RecordType,
+        FFI: FFI_Type,
+    };
+
+    ty: Type,
+    name_id: usize = undefined,
+};
+
+//;
+
+// pub const FFI_Type = struct {
+//     const Self = @This();
+//
+//     name: []const u8 = "ffi",
+//     call_fn: ?fn (*Thread, FFI_Ptr) []const Value = null,
+//     display_fn: fn (*Thread, FFI_Ptr) void = defaultDisplay,
+//     equivalent_fn: fn (*Thread, FFI_Ptr, Value) bool = defaultEquivalent,
+//     dup_fn: fn (*VM, FFI_Ptr) FFI_Ptr = defaultDup,
+//     drop_fn: fn (*VM, FFI_Ptr) void = defaultDrop,
+//
+//     name_id: usize = undefined,
+//     type_id: usize = undefined,
+//
+//     fn defaultDisplay(t: *Thread, ptr: FFI_Ptr) void {
+//         std.debug.print("*<{} {}>", .{
+//             t.vm.type_table.items[ptr.type_id].name,
+//             ptr.ptr,
+//         });
+//     }
+//
+//     fn defaultEquivalent(t: *Thread, ptr: FFI_Ptr, val: Value) bool {
+//         return false;
+//     }
+//
+//     fn defaultDup(t: *VM, ptr: FFI_Ptr) FFI_Ptr {
+//         return ptr;
+//     }
+//
+//     fn defaultDrop(t: *VM, ptr: FFI_Ptr) void {}
+//
+//     //;
+//
+//     pub fn makePtr(self: Self, ptr: anytype) FFI_Ptr {
+//         return .{
+//             .type_id = self.type_id,
+//             .ptr = @ptrCast(*FFI_Ptr.Ptr, ptr),
+//         };
+//     }
+//
+//     pub fn checkType(self: Self, ptr: FFI_Ptr) Thread.Error!void {
+//         if (ptr.type_id != self.type_id) {
+//             return error.TypeError;
+//         }
+//     }
+// };
 
 pub const ReturnValue = struct {
     value: Value,
@@ -617,6 +679,7 @@ pub const VM = struct {
         Word,
         Symbol,
         Quotation,
+        Array,
         FFI_Fn,
         FFI_Ptr,
     };
@@ -630,13 +693,14 @@ pub const VM = struct {
 
     symbol_table: ArrayList([]const u8),
     word_table: ArrayList(?Value),
-    type_table: ArrayList(*const FFI_Type),
+    type_table: ArrayList(OrthType),
 
     string_literals: ArrayList([]const u8),
     // note: this coud be a Stack([]const Value)
     //   but there is a zig bug
     //   just going to use a Value that will always be a Value.Quotation
     quotation_literals: ArrayList(Value),
+    array_literals: ArrayList(Value),
 
     pub fn init(allocator: *Allocator) Allocator.Error!Self {
         var ret = Self{
@@ -645,22 +709,73 @@ pub const VM = struct {
 
             .symbol_table = ArrayList([]const u8).init(allocator),
             .word_table = ArrayList(?Value).init(allocator),
-            .type_table = ArrayList(*const FFI_Type).init(allocator),
+            .type_table = ArrayList(OrthType).init(allocator),
 
             .string_literals = ArrayList([]const u8).init(allocator),
             .quotation_literals = ArrayList(Value).init(allocator),
+            .array_literals = ArrayList(Value).init(allocator),
         };
-        std.debug.assert(@enumToInt(BuiltInIds.Int) == try ret.internSymbol("int"));
-        std.debug.assert(@enumToInt(BuiltInIds.Float) == try ret.internSymbol("float"));
-        std.debug.assert(@enumToInt(BuiltInIds.Char) == try ret.internSymbol("char"));
-        std.debug.assert(@enumToInt(BuiltInIds.Boolean) == try ret.internSymbol("boolean"));
-        std.debug.assert(@enumToInt(BuiltInIds.Sentinel) == try ret.internSymbol("sentinel"));
-        std.debug.assert(@enumToInt(BuiltInIds.String) == try ret.internSymbol("string"));
-        std.debug.assert(@enumToInt(BuiltInIds.Word) == try ret.internSymbol("word"));
-        std.debug.assert(@enumToInt(BuiltInIds.Symbol) == try ret.internSymbol("symbol"));
-        std.debug.assert(@enumToInt(BuiltInIds.Quotation) == try ret.internSymbol("quotation"));
-        std.debug.assert(@enumToInt(BuiltInIds.FFI_Fn) == try ret.internSymbol("ffi-fn"));
-        std.debug.assert(@enumToInt(BuiltInIds.FFI_Ptr) == try ret.internSymbol("ffi-ptr"));
+        // TODO clean this up, use a loop
+        std.debug.assert(@enumToInt(BuiltInIds.Int) ==
+            try ret.installType(
+            "int",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.Float) ==
+            try ret.installType(
+            "float",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.Char) ==
+            try ret.installType(
+            "char",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.Boolean) ==
+            try ret.installType(
+            "boolean",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.Sentinel) ==
+            try ret.installType(
+            "sentinel",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.String) ==
+            try ret.installType(
+            "string",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.Word) ==
+            try ret.installType(
+            "word",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.Symbol) ==
+            try ret.installType(
+            "symbol",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.Quotation) ==
+            try ret.installType(
+            "quotation",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.Array) ==
+            try ret.installType(
+            "array",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.FFI_Fn) ==
+            try ret.installType(
+            "ffi-fn",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
+        std.debug.assert(@enumToInt(BuiltInIds.FFI_Ptr) ==
+            try ret.installType(
+            "ffi-ptr",
+            .{ .ty = .{ .Primitive = {} } },
+        ));
         return ret;
     }
 
@@ -671,6 +786,10 @@ pub const VM = struct {
             }
         }
 
+        for (self.array_literals.items) |val| {
+            self.allocator.free(val.Array);
+        }
+        self.array_literals.deinit();
         for (self.quotation_literals.items) |val| {
             self.allocator.free(val.Quotation);
         }
@@ -689,6 +808,7 @@ pub const VM = struct {
 
     // parse ===
 
+    // TODO make a version of this that doesnt duplicate the string
     pub fn internSymbol(self: *Self, str: []const u8) Allocator.Error!usize {
         for (self.symbol_table.items) |st_str, i| {
             if (std.mem.eql(u8, str, st_str)) {
@@ -709,11 +829,13 @@ pub const VM = struct {
     pub fn parse(self: *Self, tokens: []const Token) Allocator.Error![]Value {
         var ret = ArrayList(Value).init(self.allocator);
 
-        var q_stack = Stack(ArrayList(Value)).init(self.allocator);
-        defer q_stack.deinit();
+        var literals_stack = Stack(ArrayList(Value)).init(self.allocator);
+        defer literals_stack.deinit();
 
         for (tokens) |token| {
-            const append_to: *ArrayList(Value) = if (q_stack.data.items.len > 0) q_stack.index(0) catch unreachable else &ret;
+            const append_to: *ArrayList(Value) = if (literals_stack.data.items.len > 0) blk: {
+                break :blk literals_stack.index(0) catch unreachable;
+            } else &ret;
 
             switch (token.data) {
                 .String => |str_data| {
@@ -746,16 +868,25 @@ pub const VM = struct {
                 },
                 .Word => |word| {
                     if (std.mem.eql(u8, word, "{")) {
-                        try q_stack.push(ArrayList(Value).init(self.allocator));
-                    } else if (std.mem.eql(u8, word, "}")) {
+                        try literals_stack.push(ArrayList(Value).init(self.allocator));
+                    } else if (std.mem.eql(u8, word, "}") or std.mem.eql(u8, word, "}q")) {
                         // TODO handle this error for stack underflow
-                        var q_array = q_stack.pop() catch unreachable;
+                        var q_array = literals_stack.pop() catch unreachable;
                         const new_q = .{ .Quotation = q_array.toOwnedSlice() };
                         try self.quotation_literals.append(new_q);
-                        if (q_stack.data.items.len > 0) {
-                            try (q_stack.index(0) catch unreachable).append(new_q);
+                        if (literals_stack.data.items.len > 0) {
+                            try (literals_stack.index(0) catch unreachable).append(new_q);
                         } else {
                             try ret.append(new_q);
+                        }
+                    } else if (std.mem.eql(u8, word, "}a")) {
+                        var array = literals_stack.pop() catch unreachable;
+                        const new_a = .{ .Array = array.toOwnedSlice() };
+                        try self.array_literals.append(new_a);
+                        if (literals_stack.data.items.len > 0) {
+                            try (literals_stack.index(0) catch unreachable).append(new_a);
+                        } else {
+                            try ret.append(new_a);
                         }
                     } else {
                         const try_parse_float =
@@ -786,7 +917,7 @@ pub const VM = struct {
     pub fn dupValue(self: *Self, val: Value) Value {
         switch (val) {
             .FFI_Ptr => |ptr| return .{
-                .FFI_Ptr = self.type_table.items[ptr.type_id].dup_fn(self, ptr),
+                .FFI_Ptr = self.type_table.items[ptr.type_id].ty.FFI.dup_fn(self, ptr),
             },
             else => return val,
         }
@@ -795,7 +926,7 @@ pub const VM = struct {
     pub fn dropValue(self: *Self, val: Value) void {
         if (val == .FFI_Ptr) {
             const ptr = val.FFI_Ptr;
-            self.type_table.items[ptr.type_id].drop_fn(self, ptr);
+            self.type_table.items[ptr.type_id].ty.FFI.drop_fn(self, ptr);
         }
     }
 
@@ -808,7 +939,15 @@ pub const VM = struct {
         try self.type_table.append(ty);
     }
 
-    pub fn defineWord(self: *Self, name: []const u8, value: Value, doc_string: ?[]const u8) Allocator.Error!void {
+    // returns type id
+    pub fn installType(self: *Self, name: []const u8, ty: OrthType) Allocator.Error!usize {
+        const idx = self.type_table.items.len;
+        try self.type_table.append(ty);
+        self.type_table.items[idx].name_id = try self.internSymbol(name);
+        return idx;
+    }
+
+    pub fn defineWord(self: *Self, name: []const u8, value: Value) Allocator.Error!void {
         const idx = try self.internSymbol(name);
         // TODO dup value here?
         self.word_table.items[idx] = value;
@@ -875,7 +1014,7 @@ pub const Thread = struct {
     //  but FFI_Ptr.display_fn needs *Thread
     pub fn nicePrintValue(self: *Self, value: Value) void {
         switch (value) {
-            .Int => |val| std.debug.print("{b}", .{val}),
+            .Int => |val| std.debug.print("{}", .{val}),
             .Float => |val| std.debug.print("{d}f", .{val}),
             .Char => |val| switch (val) {
                 '\n' => std.debug.print("#\\space", .{}),
@@ -898,8 +1037,16 @@ pub const Thread = struct {
                 }
                 std.debug.print("}}L", .{});
             },
+            .Array => |a| {
+                std.debug.print("a{{ ", .{});
+                for (a) |val| {
+                    self.nicePrintValue(val);
+                    std.debug.print(" ", .{});
+                }
+                std.debug.print("}}L", .{});
+            },
             .FFI_Fn => |val| std.debug.print("fn({})", .{self.vm.symbol_table.items[val.name]}),
-            .FFI_Ptr => |ptr| self.vm.type_table.items[ptr.type_id].display_fn(self, ptr),
+            .FFI_Ptr => |ptr| self.vm.type_table.items[ptr.type_id].ty.FFI.display_fn(self, ptr),
         }
     }
 
@@ -932,7 +1079,8 @@ pub const Thread = struct {
             },
             .FFI_Fn => |fp| try fp.func(self),
             .FFI_Ptr => |ptr| {
-                if (self.vm.type_table.items[ptr.type_id].call_fn) |call_fn| {
+                const ty = self.vm.type_table.items[ptr.type_id].ty;
+                if (ty.FFI.call_fn) |call_fn| {
                     try self.return_stack.push(.{
                         .value = .{ .Quotation = self.current_execution },
                         .restore_ct = restore_ct,
