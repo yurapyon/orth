@@ -86,11 +86,13 @@ pub fn something(allocator: *Allocator) !void {
                 switch (err) {
                     error.WordNotFound => {
                         std.log.warn("word not found: {}", .{t.error_info.word_not_found});
-                        return err;
+                        // return err;
+                        return;
                     },
                     else => {
                         std.log.warn("err: {}", .{err});
-                        return err;
+                        // return err;
+                        return;
                     },
                 }
             };

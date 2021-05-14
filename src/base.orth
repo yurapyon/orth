@@ -30,6 +30,12 @@
 
 ; =====
 
+{ over over
+} :2dup @
+
+{ pick pick pick
+} :3dup @
+
 "( x -- )\npop a value off the stack" :drop doc!
 
 { drop drop
@@ -51,6 +57,15 @@
 } :2nip
 "( x y z -- x z )\nremove the second and third from the top values from the stack"
 @doc
+
+{ pick pick
+} :2over @
+
+{ { swap } dip swap
+} :rot< @
+
+{ swap { swap } dip
+} :rot> @
 
 ; =====
 
@@ -275,3 +290,90 @@
 } :]map
 " ( #sentinel ... k1 v1 k2 v2 -- map ) "
 @doc
+
+; iterators =====
+
+{ :obj :check :next }a :iterator @record
+:make-iterator ref :<iterator> @
+{ dup iterator-check eval } :icheck? @
+{ dup iterator-next eval } :inext! @
+
+;
+
+{ :val }a :alwayser @record
+{ make-alwayser
+  { drop #t }
+  { iterator-obj alwayser-val }
+  <iterator>
+} :ialways @
+
+;
+
+{ :iter :fn }a :mapper @record
+{ make-mapper
+  { iterator-obj mapper-iter icheck? }
+  { dup icheck?
+    { iterator-obj { mapper-iter inext! } { mapper-fn eval } bi }
+    { drop }
+    if
+    }
+  <iterator>
+} :imap @
+
+;
+
+{ :a :b }a :zipper @record
+
+{ { zipper-a } { zipper-b } bi { icheck? } both?
+} :zipper-should-continue? @
+
+{ make-zipper
+  { iterator-obj zipper-should-continue? }
+  { dup icheck?
+    { iterator-obj { zipper-a } { zipper-b } bi { inext! } bi^ }
+    { drop }
+    if
+    }
+  <iterator>
+} :izip @
+
+;
+
+{ pick icheck?
+  { { over inext! } dip { eval } keep ifold! }
+  { drop nip }
+  if
+} :ifold! @
+
+;
+
+{ :vec :at }a :viterator @record
+
+{ { viterator-at } { viterator-vec } bi vget
+} :viterator-get @
+
+{ { viterator-at 1 + } { viterator-at! } bi
+} :viterator-increment! @
+
+{ 0 make-viterator
+  { iterator-obj { viterator-at } { viterator-vec vlen } bi < }
+  { dup icheck?
+    { iterator-obj { viterator-get } { viterator-increment! } bi }
+    { drop }
+    if
+    }
+  <iterator>
+} :<viterator> @
+
+;
+
+; TODO doesnt handle if something is pushing multiple values to stack
+{ over icheck?
+  { { { dup inext! } dip vpush! } keep ivcollect!' }
+  { nip }
+  if
+} :ivcollect!' @
+
+{ <vec> ivcollect!'
+} :ivcollect! @
+

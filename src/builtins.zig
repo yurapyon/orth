@@ -112,11 +112,11 @@ pub fn f_define_record_type(t: *Thread) Thread.Error!void {
         q[1] = .{ .Word = t.vm.internSymbol("<record>") catch unreachable };
         var i: usize = 0;
         while (i < slot_ct) : (i += 1) {
-            q[2 + i * 5] = .{ .Word = t.vm.internSymbol("swap") catch unreachable };
-            q[3 + i * 5] = .{ .Word = t.vm.internSymbol("over") catch unreachable };
-            q[4 + i * 5] = .{ .Int = @intCast(i64, i) };
-            q[5 + i * 5] = .{ .Word = t.vm.internSymbol("swap") catch unreachable };
-            q[6 + i * 5] = .{ .Word = t.vm.internSymbol("rset!") catch unreachable };
+            q[2 + (slot_ct - i - 1) * 5] = .{ .Word = t.vm.internSymbol("swap") catch unreachable };
+            q[3 + (slot_ct - i - 1) * 5] = .{ .Word = t.vm.internSymbol("over") catch unreachable };
+            q[4 + (slot_ct - i - 1) * 5] = .{ .Int = @intCast(i64, i) };
+            q[5 + (slot_ct - i - 1) * 5] = .{ .Word = t.vm.internSymbol("swap") catch unreachable };
+            q[6 + (slot_ct - i - 1) * 5] = .{ .Word = t.vm.internSymbol("rset!") catch unreachable };
         }
 
         try t.vm.defineWord(constructor, .{ .Quotation = q });
@@ -144,6 +144,7 @@ pub fn f_define_record_type(t: *Thread) Thread.Error!void {
             const setter = try std.fmt.allocPrint(t.vm.allocator, "{}-{}!", .{ name_str, field_str });
             defer t.vm.allocator.free(setter);
 
+            // TODO these should typecheck
             var q_get = try t.vm.allocator.alloc(Value, 3);
             try t.vm.quotation_literals.append(.{ .Quotation = q_get });
             q_get[0] = .{ .Int = @intCast(i64, i) };
@@ -631,9 +632,9 @@ pub fn f_equivalent(t: *Thread) Thread.Error!void {
     const a = try t.stack.pop();
     const b = try t.stack.pop();
     const are_equivalent = areValuesEquivalent(t, a, b);
+    try t.stack.push(.{ .Boolean = are_equivalent });
     t.vm.dropValue(a);
     t.vm.dropValue(b);
-    try t.stack.push(.{ .Boolean = are_equivalent });
 }
 
 pub fn f_not(t: *Thread) Thread.Error!void {
@@ -688,32 +689,9 @@ pub fn f_dup(t: *Thread) Thread.Error!void {
     try t.stack.push(t.vm.dupValue(val));
 }
 
-pub fn f_2dup(t: *Thread) Thread.Error!void {
-    const a = try t.stack.peek();
-    const b = (try t.stack.index(1)).*;
-    try t.stack.push(t.vm.dupValue(b));
-    try t.stack.push(t.vm.dupValue(a));
-}
-
-pub fn f_3dup(t: *Thread) Thread.Error!void {
-    const a = try t.stack.peek();
-    const b = (try t.stack.index(1)).*;
-    const c = (try t.stack.index(2)).*;
-    try t.stack.push(t.vm.dupValue(c));
-    try t.stack.push(t.vm.dupValue(b));
-    try t.stack.push(t.vm.dupValue(a));
-}
-
 pub fn f_over(t: *Thread) Thread.Error!void {
     const val = (try t.stack.index(1)).*;
     try t.stack.push(t.vm.dupValue(val));
-}
-
-pub fn f_2over(t: *Thread) Thread.Error!void {
-    const v1 = (try t.stack.index(1)).*;
-    const v2 = (try t.stack.index(2)).*;
-    try t.stack.push(t.vm.dupValue(v2));
-    try t.stack.push(t.vm.dupValue(v1));
 }
 
 pub fn f_pick(t: *Thread) Thread.Error!void {
@@ -727,22 +705,19 @@ pub fn f_swap(t: *Thread) Thread.Error!void {
     std.mem.swap(Value, &slice[slice.len - 1], &slice[slice.len - 2]);
 }
 
-pub fn f_rot(t: *Thread) Thread.Error!void {
-    const z = try t.stack.pop();
-    const y = try t.stack.pop();
-    const x = try t.stack.pop();
-    try t.stack.push(y);
-    try t.stack.push(z);
-    try t.stack.push(x);
+pub fn f_ndup(t: *Thread) Thread.Error!void {
+    const n = try t.stack.pop();
+    if (n != .Int) return error.TypeError;
+    const val = (try t.stack.index(@intCast(usize, n.Int))).*;
+    try t.stack.push(t.vm.dupValue(val));
 }
 
-pub fn f_neg_rot(t: *Thread) Thread.Error!void {
-    const z = try t.stack.pop();
-    const y = try t.stack.pop();
-    const x = try t.stack.pop();
-    try t.stack.push(z);
-    try t.stack.push(x);
-    try t.stack.push(y);
+pub fn f_ndrop(t: *Thread) Thread.Error!void {
+    // TODO
+    // const n = try t.stack.pop();
+    // if (n != .Int) return error.TypeError;
+    // const val = try t.stack.index(@intCast(usize, n)).*;
+    // try t.stack.push(t.vm.dupValue(val));
 }
 
 // combinators ===
@@ -1585,20 +1560,8 @@ pub const builtins = [_]struct {
         .func = f_dup,
     },
     .{
-        .name = "2dup",
-        .func = f_2dup,
-    },
-    .{
-        .name = "3dup",
-        .func = f_3dup,
-    },
-    .{
         .name = "over",
         .func = f_over,
-    },
-    .{
-        .name = "2over",
-        .func = f_2over,
     },
     .{
         .name = "pick",
@@ -1609,12 +1572,12 @@ pub const builtins = [_]struct {
         .func = f_swap,
     },
     .{
-        .name = "rot<",
-        .func = f_rot,
+        .name = "ndrop",
+        .func = f_ndrop,
     },
     .{
-        .name = "rot>",
-        .func = f_neg_rot,
+        .name = "ndup",
+        .func = f_ndup,
     },
 
     .{

@@ -1,0 +1,46 @@
+{
+{ 0 swap rget } :record-type-type @
+{ 0 swap rset! } :record-type-type! @
+{ 1 swap rget } :record-type-name @
+{ 1 swap rset! } :record-type-name! @
+{ 2 swap rget } :record-type-slot-names @
+{ 2 swap rset! } :record-type-slot-names! @
+
+3 <record>
+{ { #f swap record-type-type! }
+  ; { 0 over rset! }
+  { :record-type swap record-type-name! }
+  { { :type :name :slot-names }a swap record-type-slot-names! }
+  tri
+} keep
+:(record-type) @
+
+(record-type) .stack
+
+{ 3 <record>
+  { { record-type-slot-names! }
+    { record-type-name! }
+    { record-type-type! }
+    tri
+  } keep
+} :<record-type> @
+
+(record-type) :cell { :char :lock }a <record-type> :(cell) @
+} drop
+
+{ :char :lock }a :cell @record
+
+#f #\a make-cell
+{ #\b swap cell-char! } keep
+{ { cell-char } { cell-lock! } bi } keep
+type-of
+
+1 type-of
+1.4 type-of
+:hello type-of
+<vec> type-of
+.stack
+
+:x :y :z 2over
+:x :y :z 5 ndup
+.stack

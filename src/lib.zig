@@ -35,6 +35,7 @@ const ArrayList = std.ArrayList;
 //     string_indent need to be updated
 
 // TODO need
+// tests
 // error reporting
 //   use error_info
 //   stack trace thing
@@ -46,7 +47,7 @@ const ArrayList = std.ArrayList;
 //     #b11001010
 // better float parser
 //   allow syntax like 1234f
-// index stack at n to drop or dup
+// ndrop
 // dont allow to define words that start with #
 // callability/ read vs eval
 //   should everything thats callable just auto call itself on read
@@ -54,7 +55,6 @@ const ArrayList = std.ArrayList;
 //   ref or symbol>word would be the way to get callables on the stack
 //   should ffi_fns evaluate on read
 //   quotation literals dont evaluate on read and shouldnt
-// quotations literals used as arrays
 // types
 //   all types in the same id space
 //   interfaces
@@ -66,6 +66,7 @@ const ArrayList = std.ArrayList;
 //   iterators
 //   builtin rc-ptr vs raw-ptr ?
 //     could make it so ffi-fns work on both rc and raw ptrs
+//     need weak-ptr, shared-ptr, raw-ptr
 
 // make records in orth
 //   worry about callability, display and eqv
@@ -87,7 +88,6 @@ const ArrayList = std.ArrayList;
 // parser
 //   multiline comments?
 //     could use ( )
-// some type of define-struct thing, writen w orth
 
 // TODO QOL
 // maybe make 'and' and 'or' work like lua ?
