@@ -15,51 +15,34 @@ usingnamespace lib;
 // dont type check?
 // self referential rc pointers need to be weak
 //   you only need words that put things in collections to worry about weak pointers
+//   handle circular references somehow when printing
 // functions
 //   thread exit
 //   array access words
 //   functional stuff
-//     compose
-//     map function for vecs vs protos should be specialized
-//       vmap! mmap!
-//     map fold
-//       should i treat the vec like a stack?
-//       something more like 'each' makes more sense
-//         would be cool if i could temporarily use the vec as a stack
+//     curry compose
 //   printing functions
 //     write
 //       need to translate '\n' in strings to a "\n"
 //   math stuff
 //     dont type check, have separte functions for ints and floats
+//       general versions of fns like + can be written in orth that typecheck
 //     handle integer overflow
-//     have fmod and imod built in then define mod in orth ?
-//       handles type coersion
 //   more string manipulation
 //     things that take chars
 //   error handling from within orth
 //     set and errorhandler for the thread
 // types
 //   make sure accessing them from within zig is easy
+//   dont have ffi quotations? curry and compose and make callable records
+// dip can take any callable not just a quotation
 
 // TODO want
 // functions
-//   bitwise operators
-//     want like u64 type or something
 //   math
 //     fract
-// results
 // contiguous vector thing
 //   []i64, []f64 etc
-// vec
-//   { 1 2 3 4 } <vec>,clone
-//     essentially just <quotation>,clone quotation>vec
-//       could probably just write it in orth but gotta make sure the memory stuff works
-
-// Vec
-//   vecs might be able to use the optimization
-//   that if you are mapping over them
-//     if you know that the original vec doesnt have any refs to it anymore
-//   u can reuse it for the new vector
 
 //;
 
@@ -714,10 +697,6 @@ pub fn f_ndup(t: *Thread) Thread.Error!void {
 
 pub fn f_ndrop(t: *Thread) Thread.Error!void {
     // TODO
-    // const n = try t.stack.pop();
-    // if (n != .Int) return error.TypeError;
-    // const val = try t.stack.index(@intCast(usize, n)).*;
-    // try t.stack.push(t.vm.dupValue(val));
 }
 
 // combinators ===
@@ -1335,7 +1314,6 @@ pub const ft_vec = struct {
 // mref vs mget
 //   where mget should evaluate whatever it gets out of the map
 //   and mref should just push it
-// rename maps to 'prototypes' maybe because theyre supposed to be used for more than just hashtable stuff
 // equals
 pub const ft_map = struct {
     const Self = @This();
@@ -1442,313 +1420,97 @@ pub const ft_map = struct {
 
 // =====
 
-pub const builtins = [_]struct {
+const BuiltinDefinition = struct {
     name: []const u8,
     func: FFI_Fn.Function,
-}{
-    .{
-        .name = "panic",
-        .func = f_panic,
-    },
-    .{
-        .name = "@",
-        .func = f_define,
-    },
-    .{
-        .name = "@record",
-        .func = f_define_record_type,
-    },
-    .{
-        .name = "ref",
-        .func = f_ref,
-    },
-    .{
-        .name = "eval",
-        .func = f_eval,
-    },
-    .{
-        .name = "clear-stack",
-        .func = f_clear_stack,
-    },
-    .{
-        .name = ".",
-        .func = f_print_top,
-    },
-    .{
-        .name = ".stack",
-        .func = f_print_stack,
-    },
+};
 
-    .{
-        .name = "display",
-        .func = f_display,
-    },
+pub const builtins = [_]BuiltinDefinition{
+    .{ .name = "panic", .func = f_panic },
+    .{ .name = "@", .func = f_define },
+    .{ .name = "@record", .func = f_define_record_type },
+    .{ .name = "ref", .func = f_ref },
+    .{ .name = "eval", .func = f_eval },
+    .{ .name = "clear-stack", .func = f_clear_stack },
+    .{ .name = ".", .func = f_print_top },
+    .{ .name = ".stack", .func = f_print_stack },
 
-    .{
-        .name = "read",
-        .func = f_read,
-    },
-    .{
-        .name = "parse",
-        .func = f_parse,
-    },
+    .{ .name = "display", .func = f_display },
 
-    .{
-        .name = "value-type-of",
-        .func = f_value_type_of,
-    },
-    .{
-        .name = "ffi-type-of",
-        .func = f_ffi_type_of,
-    },
-    .{
-        .name = "word>symbol",
-        .func = f_word_to_symbol,
-    },
-    .{
-        .name = "symbol>word",
-        .func = f_symbol_to_word,
-    },
-    .{
-        .name = "symbol>string",
-        .func = f_symbol_to_string,
-    },
+    .{ .name = "read", .func = f_read },
+    .{ .name = "parse", .func = f_parse },
 
-    .{
-        .name = "neg",
-        .func = f_negative,
-    },
-    .{
-        .name = "+",
-        .func = f_plus,
-    },
-    .{
-        .name = "-",
-        .func = f_minus,
-    },
-    .{
-        .name = "*",
-        .func = f_times,
-    },
-    .{
-        .name = "/",
-        .func = f_divide,
-    },
-    .{
-        .name = "mod",
-        .func = f_mod,
-    },
-    .{
-        .name = "rem",
-        .func = f_rem,
-    },
-    .{
-        .name = "<",
-        .func = f_lt,
-    },
-    .{
-        .name = "=",
-        .func = f_number_equal,
-    },
-    .{
-        .name = "float>int",
-        .func = f_float_to_int,
-    },
-    .{
-        .name = "int>float",
-        .func = f_int_to_float,
-    },
+    .{ .name = "value-type-of", .func = f_value_type_of },
+    .{ .name = "ffi-type-of", .func = f_ffi_type_of },
+    .{ .name = "word>symbol", .func = f_word_to_symbol },
+    .{ .name = "symbol>word", .func = f_symbol_to_word },
+    .{ .name = "symbol>string", .func = f_symbol_to_string },
 
-    .{
-        .name = "~",
-        .func = f_bnot,
-    },
-    .{
-        .name = "&",
-        .func = f_band,
-    },
-    .{
-        .name = "|",
-        .func = f_bior,
-    },
-    .{
-        .name = "^",
-        .func = f_bxor,
-    },
-    .{
-        .name = "<<",
-        .func = f_bshl,
-    },
-    .{
-        .name = ">>",
-        .func = f_bshr,
-    },
-    .{
-        .name = "integer-length",
-        .func = f_integer_length,
-    },
+    .{ .name = "neg", .func = f_negative },
+    .{ .name = "+", .func = f_plus },
+    .{ .name = "-", .func = f_minus },
+    .{ .name = "*", .func = f_times },
+    .{ .name = "/", .func = f_divide },
+    .{ .name = "mod", .func = f_mod },
+    .{ .name = "rem", .func = f_rem },
+    .{ .name = "<", .func = f_lt },
+    .{ .name = "=", .func = f_number_equal },
+    .{ .name = "float>int", .func = f_float_to_int },
+    .{ .name = "int>float", .func = f_int_to_float },
 
-    .{
-        .name = "?",
-        .func = f_choose,
-    },
-    .{
-        .name = "eq?",
-        .func = f_equal,
-    },
-    .{
-        .name = "eqv?",
-        .func = f_equivalent,
-    },
-    .{
-        .name = "not",
-        .func = f_not,
-    },
-    .{
-        .name = "and",
-        .func = f_and,
-    },
-    .{
-        .name = "or",
-        .func = f_or,
-    },
+    .{ .name = "~", .func = f_bnot },
+    .{ .name = "&", .func = f_band },
+    .{ .name = "|", .func = f_bior },
+    .{ .name = "^", .func = f_bxor },
+    .{ .name = "<<", .func = f_bshl },
+    .{ .name = ">>", .func = f_bshr },
+    .{ .name = "integer-length", .func = f_integer_length },
 
-    .{
-        .name = ">R",
-        .func = f_to_r,
-    },
-    .{
-        .name = "<R",
-        .func = f_from_r,
-    },
-    .{
-        .name = ".R",
-        .func = f_peek_r,
-    },
+    .{ .name = "?", .func = f_choose },
+    .{ .name = "eq?", .func = f_equal },
+    .{ .name = "eqv?", .func = f_equivalent },
+    .{ .name = "not", .func = f_not },
+    .{ .name = "and", .func = f_and },
+    .{ .name = "or", .func = f_or },
 
-    .{
-        .name = "drop",
-        .func = f_drop,
-    },
-    .{
-        .name = "dup",
-        .func = f_dup,
-    },
-    .{
-        .name = "over",
-        .func = f_over,
-    },
-    .{
-        .name = "pick",
-        .func = f_pick,
-    },
-    .{
-        .name = "swap",
-        .func = f_swap,
-    },
-    .{
-        .name = "ndrop",
-        .func = f_ndrop,
-    },
-    .{
-        .name = "ndup",
-        .func = f_ndup,
-    },
+    .{ .name = ">R", .func = f_to_r },
+    .{ .name = "<R", .func = f_from_r },
+    .{ .name = ".R", .func = f_peek_r },
 
-    .{
-        .name = "dip",
-        .func = f_dip,
-    },
+    .{ .name = "drop", .func = f_drop },
+    .{ .name = "dup", .func = f_dup },
+    .{ .name = "over", .func = f_over },
+    .{ .name = "pick", .func = f_pick },
+    .{ .name = "swap", .func = f_swap },
+    .{ .name = "ndrop", .func = f_ndrop },
+    .{ .name = "ndup", .func = f_ndup },
 
-    .{
-        .name = "<string>",
-        .func = ft_string._make,
-    },
-    .{
-        .name = "<string>,clone",
-        .func = ft_string._clone,
-    },
-    .{
-        .name = "string-append!",
-        .func = ft_string._append_in_place,
-    },
-    .{
-        .name = "string>symbol",
-        .func = ft_string._to_symbol,
-    },
-    .{
-        .name = "sget",
-        .func = ft_string._get,
-    },
-    .{
-        .name = "slen",
-        .func = ft_string._len,
-    },
-    //     .{
-    //         .name = "quotation>vec",
-    //         .func = ft_quotation._to_vec,
-    //     },
-    //
-    .{
-        .name = "<record>",
-        .func = ft_record._make,
-    },
-    .{
-        .name = "record-type-of",
-        .func = ft_record._type_of,
-    },
-    .{
-        .name = "rset!",
-        .func = ft_record._set,
-    },
-    .{
-        .name = "rget",
-        .func = ft_record._get,
-    },
+    .{ .name = "dip", .func = f_dip },
 
-    .{
-        .name = "<vec>",
-        .func = ft_vec._make,
-    },
-    .{
-        .name = "<vec>,capacity",
-        .func = ft_vec._make_capacity,
-    },
-    .{
-        .name = "vec>quotation",
-        .func = ft_vec._to_quotation,
-    },
-    .{
-        .name = "vpush!",
-        .func = ft_vec._push,
-    },
-    .{
-        .name = "vset!",
-        .func = ft_vec._set,
-    },
-    .{
-        .name = "vget",
-        .func = ft_vec._get,
-    },
-    .{
-        .name = "vlen",
-        .func = ft_vec._len,
-    },
-    .{
-        .name = "vreverse!",
-        .func = ft_vec._reverse_in_place,
-    },
+    .{ .name = "<string>", .func = ft_string._make },
+    .{ .name = "<string>,clone", .func = ft_string._clone },
+    .{ .name = "string-append!", .func = ft_string._append_in_place },
+    .{ .name = "string>symbol", .func = ft_string._to_symbol },
+    .{ .name = "sget", .func = ft_string._get },
+    .{ .name = "slen", .func = ft_string._len },
 
-    .{
-        .name = "<map>",
-        .func = ft_map._make,
-    },
-    .{
-        .name = "mget*",
-        .func = ft_map._get,
-    },
-    .{
-        .name = "mset!",
-        .func = ft_map._set,
-    },
+    // .{ .name = "quotation>vec", .func = ft_quotation._to_vec },
+
+    .{ .name = "<record>", .func = ft_record._make },
+    .{ .name = "record-type-of", .func = ft_record._type_of },
+    .{ .name = "rset!", .func = ft_record._set },
+    .{ .name = "rget", .func = ft_record._get },
+
+    .{ .name = "<vec>", .func = ft_vec._make },
+    .{ .name = "<vec>,capacity", .func = ft_vec._make_capacity },
+    // .{ .name = "vec>quotation", .func = ft_vec._to_quotation },
+    .{ .name = "vpush!", .func = ft_vec._push },
+    .{ .name = "vset!", .func = ft_vec._set },
+    .{ .name = "vget", .func = ft_vec._get },
+    .{ .name = "vlen", .func = ft_vec._len },
+    .{ .name = "vreverse!", .func = ft_vec._reverse_in_place },
+
+    .{ .name = "<map>", .func = ft_map._make },
+    .{ .name = "mget*", .func = ft_map._get },
+    .{ .name = "mset!", .func = ft_map._set },
 };

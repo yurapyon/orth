@@ -175,17 +175,34 @@
 
 ; types ==
 
+{ dup ffi-ptr?
+  { dup record?
+    { record-type-of }
+    { ffi-type-of }
+    if
+    }
+  { value-type-of }
+  if
+} :type-of @
+
 { value-type-of :int eq? } :int? @
 { value-type-of :float eq? } :float? @
 { value-type-of :char eq? } :char? @
 { value-type-of :boolean eq? } :boolean? @
 { value-type-of :sentinel eq? } :sentinel? @
-{ value-type-of :string eq? } :string? @
+{ value-type-of :string-literal eq? } :string-literal? @
 { value-type-of :word eq? } :word? @
 { value-type-of :symbol eq? } :symbol? @
-{ value-type-of :quotation eq? } :quotation-literal? @
+{ value-type-of :quotation-literal eq? } :quotation-literal? @
+{ value-type-of :array-literal eq? } :array-literal? @
 { value-type-of :ffi-fn eq? } :ffi-fn? @
 { value-type-of :ffi-ptr eq? } :ffi-ptr? @
+
+{ dup ffi-ptr?
+  { ffi-type-of :string eq? }
+  { #f }
+  if
+} :string? @
 
 { dup ffi-ptr?
   { ffi-type-of :record eq? }
@@ -205,21 +222,14 @@
   if
 } :map? @
 
-{ dup ffi-ptr?
-  { dup record?
-    { record-type-of }
-    { ffi-type-of }
-    if
-    }
-  { value-type-of }
-  if
-} :type-of @
-
 ; math ==
 
 { swap < } :> @
 { > not } :<= @
 { < not } :>= @
+
+{ 2 mod 0 = } :even? @
+{ even? not } :odd? @
 
 { { > } 2keep ? } :max @
 { { < } 2keep ? } :min @
@@ -253,16 +263,6 @@
 { { swap } dip ?
 } :unwrap,default @
 
-; quotations ===
-
-; TODO
-{ 0 swap qinsert!
-} :qpush-front! @
-
-{ <quotation>,clone
-  { qpush-front! } keep
-} :curry @
-
 ; =====
 
 { vlen 0 swap
@@ -293,6 +293,9 @@
 
 ; iterators =====
 
+; iterators should always return 2 objects
+; value/undefined #t/f
+
 { :obj :check :next }a :iterator @record
 :make-iterator ref :<iterator> @
 { dup iterator-check eval } :should-continue? @
@@ -303,7 +306,7 @@
 { :val }a :alwayser @record
 { make-alwayser
   { drop #t }
-  { iterator-obj alwayser-val }
+  { iterator-obj alwayser-val #t }
   <iterator>
 } :always @
 
@@ -313,14 +316,58 @@
 { make-mapper
   { iterator-obj mapper-iter should-continue? }
   { dup should-continue?
-    { iterator-obj { mapper-iter next! } { mapper-fn eval } bi }
-    { drop }
+    { iterator-obj
+      { mapper-iter next! }
+      { swap
+        { mapper-fn eval #t }
+        { drop #f }
+        if }
+      bi }
+    { drop #f #f }
     if
     }
   <iterator>
 } :map @
 
 ;
+
+{ :iter :fn }a :filterer @record
+{ make-filterer
+  { iterator-obj filterer-iter should-continue? }
+  { dup should-continue?
+    { iterator-obj
+      { filterer-iter next! }
+      { swap
+        { { dup } dip filterer-fn eval #t }
+        { drop #f #f }
+        if }
+      bi
+      and
+      }
+    { drop #f #f }
+    if
+    }
+  <iterator>
+} :filter @
+
+;
+
+{ pick should-continue?
+  { { over next! } dip
+    swap
+    { { eval } keep fold! }
+    { nip fold! }
+    if }
+  { drop nip }
+  if
+} :fold! @
+
+{ <vec> { over vpush! } fold! } :vcollect! @
+
+;
+
+{ :first :second }a :pair @record
+:make-pair ref :<pair> @
 
 { :a :b }a :zipper @record
 
@@ -330,8 +377,12 @@
 { make-zipper
   { iterator-obj zipper-should-continue? }
   { dup should-continue?
-    { iterator-obj { zipper-a } { zipper-b } bi { next! } bi^ }
-    { drop }
+    { iterator-obj { zipper-a } { zipper-b } bi { next! } bi^
+      { swap } dip and
+      { <pair> #t }
+      { 2drop #f #f }
+      if }
+    { drop #f #f }
     if
     }
   <iterator>
@@ -339,18 +390,10 @@
 
 ;
 
-{ pick should-continue?
-  { { over next! } dip { eval } keep fold! }
-  { drop nip }
-  if
-} :fold! @
-
-;
-
 { :vec :at }a :vec-iterator @record
 
 { { vec-iterator-at } { vec-iterator-vec } bi vget
-} :vec-iterator-get @
+} :vec-iterator-get-value @
 
 { { vec-iterator-at 1 + } { vec-iterator-at! } bi
 } :vec-iterator-increment! @
@@ -358,17 +401,19 @@
 { 0 make-vec-iterator
   { iterator-obj { vec-iterator-at } { vec-iterator-vec vlen } bi < }
   { dup should-continue?
-    { iterator-obj { vec-iterator-get } { vec-iterator-increment! } bi }
-    { drop }
+    { iterator-obj { vec-iterator-get-value } { vec-iterator-increment! } bi #t }
+    { drop #f #f }
     if
     }
   <iterator>
 } :vec-iter @
 
+;
+
 { :str :at }a :string-iterator @record
 
 { { string-iterator-at } { string-iterator-str } bi sget
-} :string-iterator-get @
+} :string-iterator-get-value @
 
 { { string-iterator-at 1 + } { string-iterator-at! } bi
 } :string-iterator-increment! @
@@ -376,22 +421,9 @@
 { 0 make-string-iterator
   { iterator-obj { string-iterator-at } { string-iterator-str slen } bi < }
   { dup should-continue?
-    { iterator-obj { string-iterator-get } { string-iterator-increment! } bi }
-    { drop }
+    { iterator-obj { string-iterator-get-value } { string-iterator-increment! } bi #t }
+    { drop #f #f }
     if
     }
   <iterator>
 } :string-iter @
-
-;
-
-; TODO doesnt handle if something is pushing multiple values to stack
-{ over should-continue?
-  { { { dup next! } dip vpush! } keep collect!' }
-  { nip }
-  if
-} :collect!' @
-
-{ <vec> collect!'
-} :collect! @
-

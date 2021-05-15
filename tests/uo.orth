@@ -85,6 +85,7 @@
 
 { :base :args }a :opdef @record
 
+; TODO fix this
 { ; spec-string > int
   { { string-iter
       { #\1 eq? } map
@@ -97,7 +98,7 @@
     booleans>int
   }
   map
-  collect!
+  vcollect!
 
   make-opdef
 } :<opdef>
@@ -107,7 +108,8 @@
 { { opdef-args vec-iter zip
     { bitwise-merge } map
     0 { | } fold!
-  } { opdef-base } bi
+    }
+  { opdef-base } bi
   |
 } :opdef-apply @
 

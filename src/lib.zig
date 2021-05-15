@@ -13,7 +13,7 @@ const ArrayList = std.ArrayList;
 //   you can get rid of the original text string
 //   the vm deep copies strings
 // values returned from parse
-//   dont need to stay around for the live of the vm
+//   dont need to stay around for the life of the vm
 //   the vm deep copies quotations
 
 // tokenizer syntax: " # :
@@ -56,22 +56,9 @@ const ArrayList = std.ArrayList;
 //   should ffi_fns evaluate on read
 //   quotation literals dont evaluate on read and shouldnt
 // types
-//   all types in the same id space
-//   interfaces
-//     1. associate data with types, ie vtables
-//     2. use trait objects
-//     i.e. iterators/next
-//       rather than trait objects, next could expect that a vtable is on the stack
-//       obj vtable next
-//   iterators
 //   builtin rc-ptr vs raw-ptr ?
 //     could make it so ffi-fns work on both rc and raw ptrs
 //     need weak-ptr, shared-ptr, raw-ptr
-
-// make records in orth
-//   worry about callability, display and eqv
-//   weak ptrs
-//   auto generate doc strings
 
 // TODO want
 // repl
@@ -88,6 +75,11 @@ const ArrayList = std.ArrayList;
 // parser
 //   multiline comments?
 //     could use ( )
+// make records in orth
+//   worry about callability, display and eqv
+//   weak ptrs
+//   auto generate doc strings
+// u64 type?
 
 // TODO QOL
 // maybe make 'and' and 'or' work like lua ?
@@ -98,11 +90,6 @@ const ArrayList = std.ArrayList;
 //     integrate this into nicePrint functions
 //   if nice print is supposed to return strings then idk
 //   nicePrint fns take a zig Writer
-// zig errors
-//   put in 'catch unreachable' on stack pops/indexes that cant fail
-//     lib is checked, builtins should be checked
-//     if you pop off the stack and instantly push something else, you wont have memory errors
-//     its probably not even worth it to do this
 // parser
 //   could do multiline strings like zig
 
@@ -380,7 +367,7 @@ pub const Tokenizer = struct {
                         },
                         '#' => .MaybeInEscape,
                         ':' => .InSymbol,
-                        // TODO check isCharWordValid
+                        // TODO check charIsWordValid
                         else => .InWord,
                     };
                     self.start_char = self.end_char - 1;
@@ -613,52 +600,6 @@ pub const OrthType = struct {
 
 //;
 
-// pub const FFI_Type = struct {
-//     const Self = @This();
-//
-//     name: []const u8 = "ffi",
-//     call_fn: ?fn (*Thread, FFI_Ptr) []const Value = null,
-//     display_fn: fn (*Thread, FFI_Ptr) void = defaultDisplay,
-//     equivalent_fn: fn (*Thread, FFI_Ptr, Value) bool = defaultEquivalent,
-//     dup_fn: fn (*VM, FFI_Ptr) FFI_Ptr = defaultDup,
-//     drop_fn: fn (*VM, FFI_Ptr) void = defaultDrop,
-//
-//     name_id: usize = undefined,
-//     type_id: usize = undefined,
-//
-//     fn defaultDisplay(t: *Thread, ptr: FFI_Ptr) void {
-//         std.debug.print("*<{} {}>", .{
-//             t.vm.type_table.items[ptr.type_id].name,
-//             ptr.ptr,
-//         });
-//     }
-//
-//     fn defaultEquivalent(t: *Thread, ptr: FFI_Ptr, val: Value) bool {
-//         return false;
-//     }
-//
-//     fn defaultDup(t: *VM, ptr: FFI_Ptr) FFI_Ptr {
-//         return ptr;
-//     }
-//
-//     fn defaultDrop(t: *VM, ptr: FFI_Ptr) void {}
-//
-//     //;
-//
-//     pub fn makePtr(self: Self, ptr: anytype) FFI_Ptr {
-//         return .{
-//             .type_id = self.type_id,
-//             .ptr = @ptrCast(*FFI_Ptr.Ptr, ptr),
-//         };
-//     }
-//
-//     pub fn checkType(self: Self, ptr: FFI_Ptr) Thread.Error!void {
-//         if (ptr.type_id != self.type_id) {
-//             return error.TypeError;
-//         }
-//     }
-// };
-
 pub const ReturnValue = struct {
     value: Value,
     restore_ct: usize,
@@ -715,67 +656,31 @@ pub const VM = struct {
             .quotation_literals = ArrayList(Value).init(allocator),
             .array_literals = ArrayList(Value).init(allocator),
         };
-        // TODO clean this up, use a loop
-        std.debug.assert(@enumToInt(BuiltInIds.Int) ==
-            try ret.installType(
-            "int",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.Float) ==
-            try ret.installType(
-            "float",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.Char) ==
-            try ret.installType(
-            "char",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.Boolean) ==
-            try ret.installType(
-            "boolean",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.Sentinel) ==
-            try ret.installType(
-            "sentinel",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.String) ==
-            try ret.installType(
-            "string-literal",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.Word) ==
-            try ret.installType(
-            "word",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.Symbol) ==
-            try ret.installType(
-            "symbol",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.Quotation) ==
-            try ret.installType(
-            "quotation-literal",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.Array) ==
-            try ret.installType(
-            "array-literal",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.FFI_Fn) ==
-            try ret.installType(
-            "ffi-fn",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
-        std.debug.assert(@enumToInt(BuiltInIds.FFI_Ptr) ==
-            try ret.installType(
-            "ffi-ptr",
-            .{ .ty = .{ .Primitive = {} } },
-        ));
+        const PrimitiveTypeData = struct {
+            id: BuiltInIds,
+            name: []const u8,
+        };
+        const primitive_types = [_]PrimitiveTypeData{
+            .{ .id = .Int, .name = "int" },
+            .{ .id = .Float, .name = "float" },
+            .{ .id = .Char, .name = "char" },
+            .{ .id = .Boolean, .name = "boolean" },
+            .{ .id = .Sentinel, .name = "sentinel" },
+            .{ .id = .String, .name = "string-literal" },
+            .{ .id = .Word, .name = "word" },
+            .{ .id = .Symbol, .name = "symbol" },
+            .{ .id = .Quotation, .name = "quotation-literal" },
+            .{ .id = .Array, .name = "array-literal" },
+            .{ .id = .FFI_Fn, .name = "ffi-fn" },
+            .{ .id = .FFI_Ptr, .name = "ffi-ptr" },
+        };
+        for (primitive_types) |p| {
+            std.debug.assert(@enumToInt(p.id) ==
+                try ret.installType(
+                p.name,
+                .{ .ty = .{ .Primitive = {} } },
+            ));
+        }
         return ret;
     }
 
@@ -824,8 +729,7 @@ pub const VM = struct {
 
     // TODO handle memory if theres an error
     //      probably just deinit the vm or something i have no idea
-    // the only error u can have is allocator errors
-    // or unfinished quotation, which happens after u go through everything anyway
+    // possible errors are allocator errors and quotation/array errors
     pub fn parse(self: *Self, tokens: []const Token) Allocator.Error![]Value {
         var ret = ArrayList(Value).init(self.allocator);
 
