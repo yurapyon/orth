@@ -295,8 +295,8 @@
 
 { :obj :check :next }a :iterator @record
 :make-iterator ref :<iterator> @
-{ dup iterator-check eval } :icheck? @
-{ dup iterator-next eval } :inext! @
+{ dup iterator-check eval } :should-continue? @
+{ dup iterator-next eval } :next! @
 
 ;
 
@@ -305,75 +305,93 @@
   { drop #t }
   { iterator-obj alwayser-val }
   <iterator>
-} :ialways @
+} :always @
 
 ;
 
 { :iter :fn }a :mapper @record
 { make-mapper
-  { iterator-obj mapper-iter icheck? }
-  { dup icheck?
-    { iterator-obj { mapper-iter inext! } { mapper-fn eval } bi }
+  { iterator-obj mapper-iter should-continue? }
+  { dup should-continue?
+    { iterator-obj { mapper-iter next! } { mapper-fn eval } bi }
     { drop }
     if
     }
   <iterator>
-} :imap @
+} :map @
 
 ;
 
 { :a :b }a :zipper @record
 
-{ { zipper-a } { zipper-b } bi { icheck? } both?
+{ { zipper-a } { zipper-b } bi { should-continue? } both?
 } :zipper-should-continue? @
 
 { make-zipper
   { iterator-obj zipper-should-continue? }
-  { dup icheck?
-    { iterator-obj { zipper-a } { zipper-b } bi { inext! } bi^ }
+  { dup should-continue?
+    { iterator-obj { zipper-a } { zipper-b } bi { next! } bi^ }
     { drop }
     if
     }
   <iterator>
-} :izip @
+} :zip @
 
 ;
 
-{ pick icheck?
-  { { over inext! } dip { eval } keep ifold! }
+{ pick should-continue?
+  { { over next! } dip { eval } keep fold! }
   { drop nip }
   if
-} :ifold! @
+} :fold! @
 
 ;
 
-{ :vec :at }a :viterator @record
+{ :vec :at }a :vec-iterator @record
 
-{ { viterator-at } { viterator-vec } bi vget
-} :viterator-get @
+{ { vec-iterator-at } { vec-iterator-vec } bi vget
+} :vec-iterator-get @
 
-{ { viterator-at 1 + } { viterator-at! } bi
-} :viterator-increment! @
+{ { vec-iterator-at 1 + } { vec-iterator-at! } bi
+} :vec-iterator-increment! @
 
-{ 0 make-viterator
-  { iterator-obj { viterator-at } { viterator-vec vlen } bi < }
-  { dup icheck?
-    { iterator-obj { viterator-get } { viterator-increment! } bi }
+{ 0 make-vec-iterator
+  { iterator-obj { vec-iterator-at } { vec-iterator-vec vlen } bi < }
+  { dup should-continue?
+    { iterator-obj { vec-iterator-get } { vec-iterator-increment! } bi }
     { drop }
     if
     }
   <iterator>
-} :<viterator> @
+} :vec-iter @
+
+{ :str :at }a :string-iterator @record
+
+{ { string-iterator-at } { string-iterator-str } bi sget
+} :string-iterator-get @
+
+{ { string-iterator-at 1 + } { string-iterator-at! } bi
+} :string-iterator-increment! @
+
+{ 0 make-string-iterator
+  { iterator-obj { string-iterator-at } { string-iterator-str slen } bi < }
+  { dup should-continue?
+    { iterator-obj { string-iterator-get } { string-iterator-increment! } bi }
+    { drop }
+    if
+    }
+  <iterator>
+} :string-iter @
 
 ;
 
 ; TODO doesnt handle if something is pushing multiple values to stack
-{ over icheck?
-  { { { dup inext! } dip vpush! } keep ivcollect!' }
+{ over should-continue?
+  { { { dup next! } dip vpush! } keep collect!' }
   { nip }
   if
-} :ivcollect!' @
+} :collect!' @
 
-{ <vec> ivcollect!'
-} :ivcollect! @
+{ <vec> collect!'
+} :collect! @
 

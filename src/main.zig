@@ -33,6 +33,7 @@ pub fn something(allocator: *Allocator) !void {
 
     // _ = try vm.installFFI_Type(&builtins.ft_quotation.ffi_type);
     // _ = try vm.installFFI_Type(&builtins.ft_vec.ffi_type);
+    try builtins.ft_string.install(&vm);
     try builtins.ft_record.install(&vm);
     try builtins.ft_vec.install(&vm);
     try builtins.ft_map.install(&vm);

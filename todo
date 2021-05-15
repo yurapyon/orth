@@ -3,3 +3,7 @@ no envs because its intended for games
   if it was more of a general purpose language envs make more sense
 
 repl
+
+// hardware
+interlace stacks ie return/restore
+ret res ret res __ res __ res __ __

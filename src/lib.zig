@@ -743,7 +743,7 @@ pub const VM = struct {
         ));
         std.debug.assert(@enumToInt(BuiltInIds.String) ==
             try ret.installType(
-            "string",
+            "string-literal",
             .{ .ty = .{ .Primitive = {} } },
         ));
         std.debug.assert(@enumToInt(BuiltInIds.Word) ==
@@ -758,12 +758,12 @@ pub const VM = struct {
         ));
         std.debug.assert(@enumToInt(BuiltInIds.Quotation) ==
             try ret.installType(
-            "quotation",
+            "quotation-literal",
             .{ .ty = .{ .Primitive = {} } },
         ));
         std.debug.assert(@enumToInt(BuiltInIds.Array) ==
             try ret.installType(
-            "array",
+            "array-literal",
             .{ .ty = .{ .Primitive = {} } },
         ));
         std.debug.assert(@enumToInt(BuiltInIds.FFI_Fn) ==

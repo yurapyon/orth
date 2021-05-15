@@ -75,107 +75,50 @@
 
 ;;
 
+{ 1 0 ?
+} :boolean>int @
 
-; iterator
+{ 0
+  { { 1 << } { boolean>int } bi* | }
+  fold!
+} :booleans>int @
 
-{
-{ <vec>
-  { vpush! } keep
-  { vpush! } keep
-  { vpush! } keep
-} :<iter>
-"( acc fn condition -- iter )"
-@doc
+{ :base :args }a :opdef @record
 
-{ 2 swap vget } :iter-acc @
-{ 2 swap vset! } :iter-acc! @
-{ 1 swap vget } :iter-fn @
-{ 0 swap vget } :iter-condition @
+{ ; spec-string > int
+  { { string-iter
+      { #\1 eq? } map
+      booleans>int } keep } dip
 
-{ { iter-acc dup } { iter-condition eval } bi } :iter-get @
-{ { iter-acc } { iter-fn eval } bi } :iter-next-acc @
-
-{ dup iter-get dup
-  { pick { iter-next-acc } { iter-acc! } bi
-    { drop } 2dip
-    }
-  { 3drop }
-  if
-} :next @
-
-
-0 { 1 + } { 5 <= } <iter> :i @
-0 { 1 + { 0 5 } dip wrap } { drop #t } <iter> :i @
-i next
-i next
-i next
-i next
-i next
-i next
-i next
-i next
-.stack
-} drop
-
-{ <vec>
-  { vpush! } keep
-  { vpush! } keep
-  { vpush! } keep
-  { vpush! } keep
-} :<iter>
-"( data get-fn condition-fn next-fn -- iter )"
-@doc
-
-{
-} :next @
-
-{ 3 swap vget } :iter-data @
-{ 3 swap vset! } :iter-data! @
-{ 2 swap vget } :iter-get-fn @
-{ 1 swap vget } :iter-condition-fn @
-{ 0 swap vget } :iter-next-fn @
-
-{ dup iter-condition-fn eval } :iter-check @
-{ dup iter-get-fn eval } :iter-get @
-{ dup iter-next-fn eval } :iter-next! @
-
-{ dup iter-check
-  { { iter-get } { iter-next! } bi #t }
-  { drop #f #f }
-  if
-} :next @
-
-0 { iter-data }
-  { iter-data 2 < }
-  { { iter-data 1 + } keep iter-data! }
-<iter> :i @
-
-i next
-i next
-i next
-.stack
-
-
-{ { 1 swap vget } { 0 swap vget } bi vget
-} :anim-at @
-
-
-[ [ :a :b :c ]vec 0 ]vec
-{ iter-data anim-at }
-{ drop #t }
-{ iter-data
-  { { 0 swap vget vbounds }
-    { 1 swap vget 1 + }
-    bi
-    wrap } keep
-  1 swap vset!
+  ; spec-string arg-order > vec of arguments
+  { always } { string-iter } bi* zip
+  { { string-iter } { always } bi* zip
+    { eq? } map
+    booleans>int
   }
-<iter> :a @
+  map
+  collect!
 
-{ 1 2 3 4 }a
+  make-opdef
+} :<opdef>
+"( spec-string arg-order -- )"
+@doc
 
-a next
-a next
-a next
-a next
+{ { opdef-args vec-iter zip
+    { bitwise-merge } map
+    0 { | } fold!
+  } { opdef-base } bi
+  |
+} :opdef-apply @
+
+;#b01 #b1100 bitwise-merge
+;#b10 #b0011 bitwise-merge
+
+[ #b01 #b10 ]vec vec-iter
+"0011aabb" "ab" <opdef>
+opdef-apply
+
+#b00110110
+
 .stack
+

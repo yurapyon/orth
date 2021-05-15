@@ -8,47 +8,17 @@
 
 { 0 make-counter
   { iterator-obj counter-should-continue? }
-  { dup icheck?
+  { dup should-continue?
     { iterator-obj { counter-acc } { counter-increment! } bi }
     { drop }
     if
     }
   <iterator>
-} :icount @
+} :count @
 
 ;;
 
-2 5 icount ivcollect!
-2 5 icount { 2 * } imap ivcollect!
-2 5 icount 0 { + } ifold!
-.stack
-
-; #\a ialways
-; #\b ialways
-; izip
-; .stack
-
-{
-<viterator> 0
-{ { 1 << } dip
-  #\1 eq? 1 0 ?
-  | }
-ifold!
-} :vector>int @
-
-[ #\1 #\0 #\0 #\1 #\1 ]vec :v19 @
-v19 vector>int .
-
-[ #\d #\a #\b #\c #\d ]vec ialways
-[ #\a #\b #\c #\d ]vec <viterator>
-izip
-{ { <viterator> } { ialways } bi* izip
-  0
-  { { 1 << } 2dip
-    eq? 1 0 ?
-    | }
-  ifold!
-}
-imap
-ivcollect!
+2 5 count collect!
+2 5 count { 2 * } map collect!
+2 5 count 0 { + } fold!
 .stack
