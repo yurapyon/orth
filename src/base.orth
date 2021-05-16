@@ -55,7 +55,7 @@
 
 { { 2drop } dip
 } :2nip
-"( x y z -- x z )\nremove the second and third from the top values from the stack"
+"( x y z -- z )\nremove the second and third from the top values from the stack"
 @doc
 
 { pick pick
@@ -151,10 +151,10 @@
 { dup 2bi*
 } :2bi^ @
 
-{ 2dup tri*
+{ dup dup tri*
 } :tri^ @
 
-{ 2dup 2tri*
+{ dup dup 2tri*
 } :2tri^ @
 
 { bi^ and
@@ -256,6 +256,7 @@
 ;  ok-val #t
 ;  #f     #f
 
+; TODO get rid of this
 { { } { "panic" . panic } if
 } :unwrap @
 
@@ -295,6 +296,10 @@
 
 ; iterators should always return 2 objects
 ; value/undefined #t/f
+
+; TODO
+;   chunks iterator
+;     array>map for 'map literals'
 
 { :obj :check :next }a :iterator @record
 :make-iterator ref :<iterator> @

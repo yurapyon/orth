@@ -6,9 +6,6 @@ const ArrayList = std.ArrayList;
 
 // stack 0 is top
 
-// display is human readable
-// write is machine readable
-
 // once you parse something to values
 //   you can get rid of the original text string
 //   the vm deep copies strings
@@ -21,12 +18,18 @@ const ArrayList = std.ArrayList;
 // i think thats all you need,
 //   as in fancy 'defining syntax at runtime' like forth isnt neccessary
 
+// error handling within orth is just result types
+//   pass errors like type errors and div/0 errors to zig
+//      with info about where it happened
+
 //;
 
 // envs/libraries are ways of naming units of code and controlling scope
 //   all words are loaded into the word_table and converted to ids anyway
 //   have ways to load new words into the vm from a hashtable
 //     with renaming, excluding
+//     define words into a hashtable linked to the current file youre loading
+//       @env or something
 //   vm word_table is the global lookup table for all words in the session
 
 // unicode is currently not supported but i would like to have it in the future
@@ -34,62 +37,44 @@ const ArrayList = std.ArrayList;
 //     unicode chars
 //     string_indent need to be updated
 
+// rcs cant really be a built in type?
+//   even though it would be nice to abstract some of the code out
+//   if you make rcs built in that adds 3 more builtin types
+//   doesnt stop you from needing finalizers, dupValue, thinking about moves
+//     think it would get in the way
+
 // TODO need
 // tests
 // error reporting
 //   use error_info
 //   stack trace thing
-//   parse with column number/word number somehow
-//     use line_num in eval code
-// better int parser
-//   hex ints
-//     #x00ff
-//     #b11001010
-// better float parser
-//   allow syntax like 1234f
-// ndrop
+//   tokenize with col_num and line_num
+//     parse with them too somehow?
+// better number parsing
+//  floats
+//   ignore nan and inf
+//   1234f 1234i
 // dont allow to define words that start with #
-// callability/ read vs eval
-//   should everything thats callable just auto call itself on read
-//   then read and eval would be the same thing
-//   ref or symbol>word would be the way to get callables on the stack
-//   should ffi_fns evaluate on read
-//   quotation literals dont evaluate on read and shouldnt
-// types
-//   builtin rc-ptr vs raw-ptr ?
-//     could make it so ffi-fns work on both rc and raw ptrs
-//     need weak-ptr, shared-ptr, raw-ptr
 
 // TODO want
-// repl
-//   load and read files
-//   probably use a scheduler thing
-// certain things cant be symbols
-//   because symbols are what you use to name functions and stuff
-//   wait for better float and int parser
+// prevent invalid symbols
+//   cant be parseable as numbers
 //   symbols can't have spaces
 //     what about string>symbol ?
 // ffi threads
 //   cooperative multithreading built into vm ?
-//     yeild and resume
+//   modular scheduler thing not part of vm
+//   yeild and resume
 // parser
 //   multiline comments?
 //     could use ( )
-// make records in orth
+// records 100% in orth
 //   worry about callability, display and eqv
-//   weak ptrs
+//   weak ptrs for cyclic "record-type" record
 //   auto generate doc strings
-// u64 type?
+// u64 type ?
 
 // TODO QOL
-// maybe make 'and' and 'or' work like lua ?
-//   are values besides #t and #f able to work in places where booleans are accepted
-//   usually this is because everything is nullable, but i dont really want that in orth
-// vm should have log/print functions or something
-//     so u can control where vm messages get printed
-//     integrate this into nicePrint functions
-//   if nice print is supposed to return strings then idk
-//   nicePrint fns take a zig Writer
 // parser
 //   could do multiline strings like zig
 
@@ -181,7 +166,7 @@ pub const StringFixer = struct {
         self.* = init(self.str, self.indent);
     }
 
-    // TODO unicode
+    // TODO codepoints i.e. \x01, dont have \0
     // escapes like \#space , which use char escaper
     pub fn parseStringEscape(ch: u8) Error!u8 {
         return switch (ch) {
@@ -728,8 +713,7 @@ pub const VM = struct {
     }
 
     // TODO handle memory if theres an error
-    //      probably just deinit the vm or something i have no idea
-    // possible errors are allocator errors and quotation/array errors
+    //   possible errors are allocator errors and quotation/array errors
     pub fn parse(self: *Self, tokens: []const Token) Allocator.Error![]Value {
         var ret = ArrayList(Value).init(self.allocator);
 
@@ -836,13 +820,6 @@ pub const VM = struct {
 
     //;
 
-    pub fn installFFI_Type(self: *Self, ty: *FFI_Type) Allocator.Error!void {
-        const idx = self.type_table.items.len;
-        ty.type_id = idx;
-        ty.name_id = try self.internSymbol(ty.name);
-        try self.type_table.append(ty);
-    }
-
     // returns type id
     pub fn installType(self: *Self, name: []const u8, ty: OrthType) Allocator.Error!usize {
         const idx = self.type_table.items.len;
@@ -851,9 +828,10 @@ pub const VM = struct {
         return idx;
     }
 
+    // TODO dupValue here?
+    //   this is designed to be used from within zig not in ffi_fns
     pub fn defineWord(self: *Self, name: []const u8, value: Value) Allocator.Error!void {
         const idx = try self.internSymbol(name);
-        // TODO dup value here?
         self.word_table.items[idx] = value;
     }
 };

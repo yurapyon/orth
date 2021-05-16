@@ -9,14 +9,19 @@ usingnamespace lib;
 
 // typecheck after you get all the args u want
 
+// display is human readable
+// write is machine readable
+
 //;
 
 // TODO need
-// dont type check?
 // self referential rc pointers need to be weak
 //   you only need words that put things in collections to worry about weak pointers
 //   handle circular references somehow when printing
 // functions
+//   stack accessors, stack len, stack iterator
+//     define . and .stack in orth
+//   ref returns a result
 //   thread exit
 //   array access words
 //   functional stuff
@@ -25,22 +30,28 @@ usingnamespace lib;
 //     write
 //       need to translate '\n' in strings to a "\n"
 //   math stuff
-//     dont type check, have separte functions for ints and floats
-//       general versions of fns like + can be written in orth that typecheck
 //     handle integer overflow
-//   more string manipulation
-//     things that take chars
-//   error handling from within orth
-//     set and errorhandler for the thread
+//       check where it can happen and make it a Thread.Error or change + to +%
+//   string manipulation
+//   ndrop
+//   file reading and writing
+//     ports probably
 // types
 //   make sure accessing them from within zig is easy
-//   dont have ffi quotations? curry and compose and make callable records
+//   dont have ffi quotations?
+//     curry and compose can be callable records
+//   ports like in scheme
+//     displayp writep
+//     ports can be string, file, stdout/in/err, etc
+//     write an iterator to a port
 // dip can take any callable not just a quotation
 
 // TODO want
 // functions
 //   math
 //     fract
+//     dont type check, have separte functions for ints and floats ?
+//       general versions of fns like + can be written in orth that typecheck
 // contiguous vector thing
 //   []i64, []f64 etc
 
@@ -241,6 +252,7 @@ pub fn f_read(t: *Thread) Thread.Error!void {
     }
 }
 
+// TODO this should return a result
 pub fn f_parse(t: *Thread) Thread.Error!void {
     const str = try t.stack.pop();
     if (str != .String) return error.TypeError;
@@ -688,6 +700,7 @@ pub fn f_swap(t: *Thread) Thread.Error!void {
     std.mem.swap(Value, &slice[slice.len - 1], &slice[slice.len - 2]);
 }
 
+// TODO dont have this?
 pub fn f_ndup(t: *Thread) Thread.Error!void {
     const n = try t.stack.pop();
     if (n != .Int) return error.TypeError;
@@ -748,6 +761,7 @@ pub fn Rc(comptime T: type) type {
 
 // string ===
 
+// TODO separate out code that takes a literal string
 pub const ft_string = struct {
     const Self = @This();
 
@@ -1267,8 +1281,7 @@ pub const ft_vec = struct {
         if (idx != .Int) return error.TypeError;
 
         var rc = ptr.FFI_Ptr.cast(Rc(Vec));
-        // TODO shouldnt be dup
-        rc.obj.items[@intCast(usize, idx.Int)] = t.vm.dupValue(val);
+        rc.obj.items[@intCast(usize, idx.Int)] = val;
 
         t.vm.dropValue(ptr);
     }
@@ -1311,7 +1324,7 @@ pub const ft_vec = struct {
 // map ===
 
 // TODO
-// mref vs mget
+// mref vs mget ?   'mget eval' isnt bad or 'meval'
 //   where mget should evaluate whatever it gets out of the map
 //   and mref should just push it
 // equals

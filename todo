@@ -1,8 +1,7 @@
-no envs because its intended for games
-  where you have alot of control in zig to load different code units
-  if it was more of a general purpose language envs make more sense
+think abt api as a scripting language
 
-repl
+for games i think you need to be able to push stuff to the stack
+  and evaluate value by value?
 
 // hardware
 interlace stacks ie return/restore
