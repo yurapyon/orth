@@ -1,0 +1,83 @@
+; 600 800
+; drawer bind-spritebatch
+; { 0 0 1 1 } keep draw-rectangle!
+; { 10 10 :translate } keep
+begin-sb!
+some-image set-texture!
+0 0 1 1 rect!
+end-sb!
+
+{ :data :fn }a :closure @record
+{ :prog }a :gradient @record
+
+; could write an mget>set-uniform type thing
+; default symbol program map
+
+{ #f <vert-string>
+  " something " <frag-string>
+  <program>
+  dup set-shader!
+  { swap
+    { { 0 0 0 1 <color> :c1 } 2dip mget,default>set-uniform }
+    { { 1 1 1 1 <color> :c2 } 2dip mget,default>set-uniform }
+    { { #f        :vertical } 2dip mget,default>set-uniform }
+    2tri } keep
+  make-gradient
+
+  { closure-data gradient-prog set-shader!
+    fullscreen-rect! }
+
+  make-closure
+} :<gradient> @
+
+{ #f <vert-string>
+  " something " <frag-string>
+  <program>
+  dup set-shader!
+  { { { { 0 0 0 1 <color> :c1 } dip mget,default color>stack } { "c1" get-uniform-location uniform4f } bi^ }
+    { { { 1 1 1 1 <color> :c2 } dip mget,default color>stack } { "c2" get-uniform-location uniform4f } bi^ }
+    { { { #f        :vertical } dip mget,default boolean>int } { "vertical" get-uniform-location uniform1i } bi^ }
+    2tri } keep
+  make-gradient
+
+  { closure-data gradient-prog set-shader!
+    fullscreen-rect! }
+
+  make-closure
+} :<gradient> @
+
+{ :c1 :c2 :vert :prog :c1-loc :c2-loc :vertical-loc }a :gradient-data @record
+{ { { 0 0 0 1 <color> :c1 } dip mget,default }
+  { { 1 1 1 1 <color> :c2 } dip mget,default }
+  { { #f :vertical } dip mget,default }
+  tri
+  #f <vert-string>
+  " something " <frag-string>
+  <program>
+  dup
+  { "c1" get-uniform-location }
+  { "c2" get-uniform-location }
+  { "vertical" get-uniform-location }
+  tri
+  make-gradient-data
+
+  { { { gradient-data-program set-shader! }
+      { { gradient-data-c1 color>stack } { gradient-data-c1-loc } bi uniform4f }
+      { { gradient-data-c2 color>stack } { gradient-data-c2-loc } bi uniform4f }
+      { { gradient-data-vertical boolean>int } { gradient-data-vertical-loc } bi uniform1i }
+  }a cleave } keep
+
+  { closure-data gradient-data-prog set-shader!
+    fullscreen-rect! }
+
+  make-closure
+} :<gradient> @
+
+[ :c1 0 0 0 1 <color>
+  :c2 0 1 0 1 <color>
+  :vertical #f
+]map <gradient> :g @
+
+g closure-fn eval
+g closure-fn eval
+g closure-fn eval

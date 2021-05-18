@@ -55,6 +55,8 @@ const ArrayList = std.ArrayList;
 //   ignore nan and inf
 //   1234f 1234i
 // dont allow to define words that start with #
+// maybe use [ ] for array literals, have array>vec and array>map
+//   i like just having { } be the only syntax
 
 // TODO want
 // prevent invalid symbols
