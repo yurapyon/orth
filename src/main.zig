@@ -54,7 +54,16 @@ pub fn something(allocator: *Allocator) !void {
         var t = Thread.init(&vm, values);
         defer t.deinit();
 
-        while (try t.step()) {}
+        while (t.step() catch |err| {
+            switch (err) {
+                error.WordNotFound => {
+                    std.log.warn("word not found: {}", .{t.error_info.word_not_found});
+                    // return err;
+                    return;
+                },
+                else => return err,
+            }
+        }) {}
     }
 
     {
@@ -87,6 +96,9 @@ pub fn something(allocator: *Allocator) !void {
                         std.log.warn("word not found: {}", .{t.error_info.word_not_found});
                         // return err;
                         return;
+                    },
+                    error.TypeError => {
+                        return err;
                     },
                     else => {
                         std.log.warn("err: {}", .{err});

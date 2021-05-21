@@ -12,39 +12,36 @@ usingnamespace lib;
 // display is human readable
 // write is machine readable
 
+// dont have ffi quotations
+//   any new quotations generated can be interned from vectors
+//   like strings and symbols
+
 //;
 
 // TODO need
+// ports
+//   displayp writep
+//   string, file, stdin/err/out, vector port
+//   write an iterator to a port
 // self referential rc pointers need to be weak
 //   you only need words that put things in collections to worry about weak pointers
 //   handle circular references somehow when printing
+// all returns of error.TypeError report what was expected
 // functions
-//   stack accessors, stack len, stack iterator
-//     define . and .stack in orth
-//   ref returns a result
+//   text
+//     string manipulation
+//     string format
+//     printing functions
+//       write
+//         need to translate '\n' in strings to a "\n"
 //   thread exit
 //   array access words
-//   functional stuff
-//     curry compose
-//   printing functions
-//     write
-//       need to translate '\n' in strings to a "\n"
 //   math stuff
 //     handle integer overflow
 //       check where it can happen and make it a Thread.Error or change + to +%
-//   string manipulation
-//   ndrop
-//   file reading and writing
-//     ports probably
 // types
 //   make sure accessing them from within zig is easy
-//   dont have ffi quotations?
-//     curry and compose can be callable records
-//   ports like in scheme
-//     displayp writep
-//     ports can be string, file, stdout/in/err, etc
-//     write an iterator to a port
-// dip can take any callable not just a quotation
+// short circuiting and and or
 
 // TODO want
 // functions
@@ -52,7 +49,7 @@ usingnamespace lib;
 //     fract
 //     dont type check, have separte functions for ints and floats ?
 //       general versions of fns like + can be written in orth that typecheck
-// contiguous vector thing
+// homogeneous vector thing
 //   []i64, []f64 etc
 
 //;
@@ -156,45 +153,61 @@ pub fn f_define_record_type(t: *Thread) Thread.Error!void {
     }
 }
 
-// TODO ref should return a result type
 pub fn f_ref(t: *Thread) Thread.Error!void {
     const name = try t.stack.pop();
     if (name != .Symbol) return error.TypeError;
 
     if (t.vm.word_table.items[name.Symbol]) |val| {
         try t.stack.push(t.vm.dupValue(val));
+        try t.stack.push(.{ .Boolean = true });
     } else {
-        t.vm.error_info.word_not_found = t.vm.symbol_table.items[name.Symbol];
-        return error.WordNotFound;
+        try t.stack.push(.{ .Boolean = false });
+        try t.stack.push(.{ .Boolean = false });
     }
 }
 
 pub fn f_eval(t: *Thread) Thread.Error!void {
     const val = try t.stack.pop();
     try t.evaluateValue(val, 0);
-    // TODO can u drop this?
-    t.vm.dropValue(val);
+}
+
+pub fn f_eval_restore(t: *Thread) Thread.Error!void {
+    const restore_num = try t.stack.pop();
+    const val = try t.stack.pop();
+    if (restore_num != .Int) return error.TypeError;
+    try t.evaluateValue(val, @intCast(usize, restore_num.Int));
+}
+
+pub fn f_push_restore(t: *Thread) Thread.Error!void {
+    const val = try t.stack.pop();
+    try t.restore_stack.push(val);
+}
+
+pub fn f_stack_len(t: *Thread) Thread.Error!void {
+    try t.stack.push(.{ .Int = @intCast(i64, t.stack.data.items.len) });
+}
+
+pub fn f_stack_index(t: *Thread) Thread.Error!void {
+    const idx = try t.stack.pop();
+    if (idx != .Int) return error.TypeError;
+    try t.stack.push(t.vm.dupValue((try t.stack.index(@intCast(usize, idx.Int))).*));
 }
 
 pub fn f_clear_stack(t: *Thread) Thread.Error!void {
-    // TODO handle rc
+    for (t.stack.data.items) |v| {
+        t.vm.dropValue(v);
+    }
     t.stack.data.items.len = 0;
 }
 
-pub fn f_print_top(t: *Thread) Thread.Error!void {
-    std.debug.print("TOP| ", .{});
-    t.nicePrintValue(try t.stack.peek());
-    std.debug.print("\n", .{});
-}
-
-pub fn f_print_stack(t: *Thread) Thread.Error!void {
-    std.debug.print("STACK| len: {}\n", .{t.stack.data.items.len});
-    for (t.stack.data.items) |it, i| {
-        std.debug.print("  {}| ", .{t.stack.data.items.len - i - 1});
-        t.nicePrintValue(it);
-        std.debug.print("\n", .{});
-    }
-}
+// pub fn f_print_stack(t: *Thread) Thread.Error!void {
+//     std.debug.print("STACK| len: {}\n", .{t.stack.data.items.len});
+//     for (t.stack.data.items) |it, i| {
+//         std.debug.print("  {}| ", .{t.stack.data.items.len - i - 1});
+//         t.nicePrintValue(it);
+//         std.debug.print("\n", .{});
+//     }
+// }
 
 // display/write ===
 
@@ -237,7 +250,9 @@ fn displayValue(t: *Thread, value: Value) void {
 }
 
 pub fn f_display(t: *Thread) Thread.Error!void {
-    displayValue(t, try t.stack.pop());
+    const val = try t.stack.pop();
+    displayValue(t, val);
+    t.vm.dropValue(val);
 }
 
 // repl ==
@@ -660,7 +675,6 @@ pub fn f_to_r(t: *Thread) Thread.Error!void {
     try t.return_stack.push(.{
         .value = try t.stack.pop(),
         .restore_ct = std.math.maxInt(usize),
-        .has_callable = false,
     });
 }
 
@@ -698,29 +712,6 @@ pub fn f_swap(t: *Thread) Thread.Error!void {
     var slice = t.stack.data.items;
     if (slice.len < 2) return error.StackUnderflow;
     std.mem.swap(Value, &slice[slice.len - 1], &slice[slice.len - 2]);
-}
-
-// TODO dont have this?
-pub fn f_ndup(t: *Thread) Thread.Error!void {
-    const n = try t.stack.pop();
-    if (n != .Int) return error.TypeError;
-    const val = (try t.stack.index(@intCast(usize, n.Int))).*;
-    try t.stack.push(t.vm.dupValue(val));
-}
-
-pub fn f_ndrop(t: *Thread) Thread.Error!void {
-    // TODO
-}
-
-// combinators ===
-
-// TODO quot doesnt have to be a quotation
-pub fn f_dip(t: *Thread) Thread.Error!void {
-    const quot = try t.stack.pop();
-    const restore = try t.stack.pop();
-    if (quot != .Quotation) return error.TypeError;
-    try t.restore_stack.push(restore);
-    try t.evaluateValue(quot, 1);
 }
 
 // Rc ===
@@ -949,81 +940,6 @@ pub const ft_string = struct {
         t.vm.dropValue(this);
     }
 };
-
-// quotation ===
-
-// pub const ft_quotation = struct {
-//     const Self = @This();
-//
-//     //     pub var ffi_type = FFI_Type{
-//     //         .name = "ffi-quotation",
-//     //         .call_fn = call,
-//     //         .display_fn = display,
-//     //         .dup_fn = dup,
-//     //         .drop_fn = drop,
-//     //     };
-//
-//     pub fn call(t: *Thread, ptr: FFI_Ptr) []const Value {
-//         const rc = ptr.cast(Rc(ArrayList(Value)));
-//         return rc.obj.items;
-//     }
-//
-//     pub fn display(t: *Thread, ptr: FFI_Ptr) void {
-//         const rc = ptr.cast(Rc(ArrayList(Value)));
-//         std.debug.print("q{{ ", .{});
-//         for (rc.obj.items) |v| {
-//             t.nicePrintValue(v);
-//             std.debug.print(" ", .{});
-//         }
-//         std.debug.print("}}", .{});
-//     }
-//
-//     pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
-//         var rc = ptr.cast(Rc(ArrayList(Value)));
-//         rc.inc();
-//         return Self.ffi_type.makePtr(rc);
-//     }
-//
-//     pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
-//         var rc = ptr.cast(Rc(ArrayList(Value)));
-//         if (!rc.dec()) {
-//             for (rc.obj.items) |val| {
-//                 vm.dropValue(val);
-//             }
-//             rc.obj.deinit();
-//             vm.allocator.destroy(rc);
-//         }
-//     }
-//
-//     //;
-//
-//     pub fn _to_vec(t: *Thread) Thread.Error!void {
-//         const this = try t.stack.pop();
-//         switch (this) {
-//             .Quotation => |q| {
-//                 var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
-//                 rc.obj = ArrayList(Value).init(t.vm.allocator);
-//                 try rc.obj.appendSlice(q);
-//                 try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(rc) });
-//             },
-//             .FFI_Ptr => |ptr| {
-//                 try Self.ffi_type.checkType(ptr);
-//                 var this_rc = ptr.cast(Rc(ArrayList(Value)));
-//                 if (this_rc.ref_ct == 1) {
-//                     try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(this_rc) });
-//                 } else {
-//                     var rc = try Rc(ArrayList(Value)).makeOne(t.vm.allocator);
-//                     rc.obj = ArrayList(Value).init(t.vm.allocator);
-//                     try rc.obj.appendSlice(this_rc.obj.items);
-//                     try t.stack.push(.{ .FFI_Ptr = ft_vec.ffi_type.makePtr(rc) });
-//                     t.vm.dropValue(this);
-//                 }
-//             },
-//             else => return error.TypeError,
-//         }
-//     }
-// };
-//
 
 // record ===
 
@@ -1321,6 +1237,102 @@ pub const ft_vec = struct {
     }
 };
 
+// file ==
+
+pub const ft_file = struct {
+    const Self = @This();
+
+    pub const File = struct {
+        filepath: []u8,
+        file: std.fs.File,
+    };
+
+    pub var type_id: usize = undefined;
+
+    pub fn install(vm: *VM) Allocator.Error!void {
+        type_id = try vm.installType("file", .{
+            .ty = .{
+                .FFI = .{
+                    .display_fn = display,
+                    .dup_fn = dup,
+                    .drop_fn = drop,
+                },
+            },
+        });
+    }
+
+    pub fn display(t: *Thread, ptr: FFI_Ptr) void {
+        const rc = ptr.cast(Rc(File));
+        // TODO
+        //         std.debug.print("m[ ", .{});
+        //         var iter = rc.obj.iterator();
+        //         while (iter.next()) |entry| {
+        //             std.debug.print("{} ", .{t.vm.symbol_table.items[entry.key]});
+        //             t.nicePrintValue(entry.value);
+        //             std.debug.print(" ", .{});
+        //         }
+        //         std.debug.print("]", .{});
+    }
+
+    pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
+        var rc = ptr.cast(Rc(File));
+        rc.inc();
+        return .{
+            .type_id = type_id,
+            .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+        };
+    }
+
+    pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
+        var rc = ptr.cast(Rc(File));
+        if (!rc.dec()) {
+            // TODO
+            //             var iter = rc.obj.iterator();
+            //             while (iter.next()) |entry| {
+            //                 vm.dropValue(entry.value);
+            //             }
+            //             rc.obj.deinit();
+            vm.allocator.destroy(rc);
+        }
+    }
+
+    //;
+
+    // should return a result
+    pub fn _open(t: *Thread) Thread.Error!void {
+        // TODO allow ffi string
+        const path = try t.stack.pop();
+        const open_flag_str = try t.stack.pop();
+        if (path != .String) return error.TypeError;
+        if (open_flag_str != .String) return error.TypeError;
+
+        var flags = std.fs.File.OpenFlags{
+            .read = false,
+        };
+        for (open_flag_str) |ch| {
+            if (ch == 'r') flags.read = true;
+            if (ch == 'w') flags.write = true;
+        }
+
+        if (std.fs.cwd().openFile(path.String, flags)) |f| {
+            errdefer f.close();
+
+            var rc = try Rc(File).makeOne(t.vm.allocator);
+            rc.obj = f;
+            try t.stack.push(.{
+                .FFI_Ptr = .{
+                    .type_id = type_id,
+                    .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+                },
+            });
+            try t.stack.push(.{ .Boolean = true });
+        } else {
+            try t.stack.push(.{ .String = "couldn't load file" });
+            try t.stack.push(.{ .Boolean = false });
+        }
+    }
+};
+
 // map ===
 
 // TODO
@@ -1443,10 +1455,15 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "@", .func = f_define },
     .{ .name = "@record", .func = f_define_record_type },
     .{ .name = "ref", .func = f_ref },
-    .{ .name = "eval", .func = f_eval },
+    .{ .name = "eval'", .func = f_eval },
+    .{ .name = "eval,restore'", .func = f_eval_restore },
+    .{ .name = ">restore", .func = f_push_restore },
+
+    .{ .name = "stack-len", .func = f_stack_len },
+    .{ .name = "stack-index", .func = f_stack_index },
     .{ .name = "clear-stack", .func = f_clear_stack },
-    .{ .name = ".", .func = f_print_top },
-    .{ .name = ".stack", .func = f_print_stack },
+
+    // .{ .name = "_.stack", .func = f_print_stack },
 
     .{ .name = "display", .func = f_display },
 
@@ -1495,10 +1512,6 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "over", .func = f_over },
     .{ .name = "pick", .func = f_pick },
     .{ .name = "swap", .func = f_swap },
-    .{ .name = "ndrop", .func = f_ndrop },
-    .{ .name = "ndup", .func = f_ndup },
-
-    .{ .name = "dip", .func = f_dip },
 
     .{ .name = "<string>", .func = ft_string._make },
     .{ .name = "<string>,clone", .func = ft_string._clone },

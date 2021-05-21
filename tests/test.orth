@@ -1,3 +1,10 @@
+; 1 2 :a { + } dip .stack
+
+:a :b :c :d [ :e :f ]vec
+.stack
+
+{
+
 { :inc :stop :acc }a :counter @record
 
 { { counter-acc } { counter-stop } bi <
@@ -6,6 +13,7 @@
 { { { counter-acc } { counter-inc } bi + } keep counter-acc!
 } :counter-increment! @
 
+; TODO make sure inc != 0
 { 0 make-counter
   { iterator-obj counter-should-continue? }
   { dup should-continue?
@@ -15,6 +23,16 @@
     }
   <iterator>
 } :count @
+
+1 5 count
+1 5 count
+{ { + } curry } map
+zip
+{ pair>stack eval } map
+vcollect!
+.stack
+
+
 
 ;;
 
@@ -50,4 +68,5 @@ nop nop
 :begin label
 
 ]vec
+} drop
 } drop

@@ -10,13 +10,39 @@
 { { symbol>string display } keep
   ": " display
   ; todo ref display should be ref write
-  { ref display } keep newline
+  { ref drop display } keep newline
   doc display newline
 } :.doc
 "( symbol -- )\nprint documentation for a word"
 @doc
 
-{ ref eval
+{ dup value-type-of :ffi-ptr eq?
+  { dup ffi-type-of :record eq?
+    { dup record-type-of :callable eq?
+      { { callable-data } { callable-q eval } bi }
+      { eval' }
+      ? eval' }
+    { eval' }
+    ? eval' }
+  { eval' }
+  ? eval'
+} :eval @
+
+; TODO
+; { over value-type-of :ffi-ptr eq?
+  ; { over ffi-type-of :record eq?
+    ; { over record-type-of :callable eq?
+      ; ; what to do here ?
+      ; { { callable-data } { callable-q eval,restore } bi }
+      ; { eval,restore' }
+      ; if }
+    ; { eval,restore' }
+    ; if }
+  ; { eval,restore' }
+  ; if }
+; } :eval,restore @
+
+{ ref unwrap eval
 } :exec
 "( symbol -- )\nevaluate a symbol"
 @doc
@@ -28,13 +54,31 @@
 "( -- )\ndisplay a newline"
 @doc
 
+{ "TOP| " display 0 stack-index display newline
+} :.
+"( x -- )\ndisplay the top of the stack"
+@doc
+
+{ "STACK| len: " display stack-len display newline
+  stack-iter
+  { { "    " display display "| " display } keep
+    2 + stack-index display newline }
+  each!
+} :.stack
+"( -- )\ndisplay the stack"
+@doc
+
 ; =====
 
 { over over
-} :2dup @
+} :2dup
+"( x y -- x y x y )"
+@doc
 
 { pick pick pick
-} :3dup @
+} :3dup
+"( x y z -- x y z x y z )"
+@doc
 
 "( x -- )\npop a value off the stack" :drop doc!
 
@@ -69,7 +113,10 @@
 
 ; =====
 
-"( x q -- x )\nremove x from the stack. eval q. then restore x to the stack" :dip doc!
+{ swap >restore 1 eval,restore
+} :dip
+"( x q -- x )\nremove x from the stack. eval q. then restore x to the stack"
+@doc
 
 { swap { dip } dip
 } :2dip
@@ -170,7 +217,7 @@
 { { } swap if } :unless @
 
 ; TODO
-; if* when* unless* ?if
+; ?if
 ; cond case
 
 ; types ==
@@ -256,13 +303,20 @@
 ;  ok-val #t
 ;  #f     #f
 
-; TODO get rid of this
+; TODO get rid of this ?
+; have unwrap that prints an error message before panic
 { { } { "panic" . panic } if
 } :unwrap @
 
 ; val t/f def -- val or default
 { { swap } dip ?
 } :unwrap,default @
+
+;
+
+; TODO for now this needs to be here because of unwrap
+; fix that and move back up by eval
+:eval,restore' ref unwrap :eval,restore @
 
 ; =====
 
@@ -302,7 +356,7 @@
 ;     array>map for 'map literals'
 
 { :obj :check :next }a :iterator @record
-:make-iterator ref :<iterator> @
+:make-iterator ref unwrap :<iterator> @
 { dup iterator-check eval } :should-continue? @
 { dup iterator-next eval } :next! @
 
@@ -357,6 +411,18 @@
 
 ;
 
+{ over should-continue?
+  { over next!
+    { over eval }
+    { drop }
+    if
+    each! }
+  { drop }
+  if
+} :each!
+"( iter q -- )"
+@doc
+
 { pick should-continue?
   { { over next! } dip
     swap
@@ -365,14 +431,19 @@
     if }
   { drop nip }
   if
-} :fold! @
+} :fold!
+"( iter acc fn -- )"
+@doc
 
 { <vec> { over vpush! } fold! } :vcollect! @
 
 ;
 
 { :first :second }a :pair @record
-:make-pair ref :<pair> @
+:make-pair ref unwrap :<pair> @
+
+{ { pair-first } { pair-second } bi
+} :pair>stack @
 
 { :a :b }a :zipper @record
 
@@ -432,3 +503,50 @@
     }
   <iterator>
 } :string-iter @
+
+;
+
+{ :inc :stop :acc }a :counter @record
+
+{ { counter-acc } { counter-stop } bi <
+} :counter-should-continue? @
+
+{ { { counter-acc } { counter-inc } bi + } keep counter-acc!
+} :counter-increment! @
+
+; TODO make sure inc != 0
+; if you want to cound with floats, this 0 needs to be a float
+{ 0 make-counter
+  { iterator-obj counter-should-continue? }
+  { dup should-continue?
+    { iterator-obj { counter-acc } { counter-increment! } bi #t }
+    { drop #f }
+    if
+    }
+  <iterator>
+} :count @
+
+;
+
+{ stack-len { always } { 1 swap count } bi
+  zip
+  { pair>stack - 1 - } map
+} :stack-iter @
+
+; =====
+
+{ :data :q }a :callable @record
+
+{ :saved-val :q }a :curried @record
+
+{ make-curried
+  { { curried-saved-val } { curried-q eval } bi }
+  make-callable
+} :curry @
+
+{ :p :q }a :composed @record
+
+{ make-composed
+  { { composed-p eval } { composed-q eval } bi }
+  make-callable
+} :compose @

@@ -13,7 +13,7 @@ const ArrayList = std.ArrayList;
 //   dont need to stay around for the life of the vm
 //   the vm deep copies quotations
 
-// tokenizer syntax: " # :
+// tokenizer syntax: " # : ;
 //    parser syntax: { } float int
 // i think thats all you need,
 //   as in fancy 'defining syntax at runtime' like forth isnt neccessary
@@ -51,12 +51,13 @@ const ArrayList = std.ArrayList;
 //   tokenize with col_num and line_num
 //     parse with them too somehow?
 // better number parsing
-//  floats
-//   ignore nan and inf
+//   floats
+//     ignore nan and inf
 //   1234f 1234i
 // dont allow to define words that start with #
-// maybe use [ ] for array literals, have array>vec and array>map
-//   i like just having { } be the only syntax
+// use "//" for comments instead of ";" ?
+// can return stack be used as restore stack?
+//   then you dont need >restore, can just use >R
 
 // TODO want
 // prevent invalid symbols
@@ -68,17 +69,15 @@ const ArrayList = std.ArrayList;
 //   modular scheduler thing not part of vm
 //   yeild and resume
 // parser
+//   could do multiline strings like zig
+//     would make the logic easier
 //   multiline comments?
 //     could use ( )
 // records 100% in orth
-//   worry about callability, display and eqv
+//   worry about display and eqv
 //   weak ptrs for cyclic "record-type" record
 //   auto generate doc strings
 // u64 type ?
-
-// TODO QOL
-// parser
-//   could do multiline strings like zig
 
 //;
 
@@ -542,13 +541,11 @@ pub const Value = union(enum) {
 pub const RecordType = struct {
     // TODO keep slot names
     slot_ct: usize,
-    // call_fn: ?Value = null,
     // display_fn: Value,
     // equivalent_fn: Value,
 };
 
 pub const FFI_Type = struct {
-    call_fn: ?fn (*Thread, FFI_Ptr) []const Value = null,
     display_fn: fn (*Thread, FFI_Ptr) void = defaultDisplay,
     equivalent_fn: fn (*Thread, FFI_Ptr, Value) bool = defaultEquivalent,
     // TODO can this throw errors
@@ -590,13 +587,12 @@ pub const OrthType = struct {
 pub const ReturnValue = struct {
     value: Value,
     restore_ct: usize,
-    //TODO "callee was callable" or something
-    has_callable: bool,
 };
 
 pub const VM = struct {
     const Self = @This();
 
+    // TODO get rid of this and use @TagType(Value) instead?
     pub const BuiltInIds = enum {
         Int,
         Float,
@@ -865,7 +861,6 @@ pub const Thread = struct {
     stack: Stack(Value),
     return_stack: Stack(ReturnValue),
     restore_stack: Stack(Value),
-    callables_stack: Stack(Value),
 
     pub fn init(vm: *VM, values: []const Value) Self {
         var ret = .{
@@ -877,7 +872,6 @@ pub const Thread = struct {
             .stack = Stack(Value).init(vm.allocator),
             .return_stack = Stack(ReturnValue).init(vm.allocator),
             .restore_stack = Stack(Value).init(vm.allocator),
-            .callables_stack = Stack(Value).init(vm.allocator),
         };
         return ret;
     }
@@ -886,7 +880,6 @@ pub const Thread = struct {
         for (self.stack.data.items) |val| {
             self.vm.dropValue(val);
         }
-        self.callables_stack.deinit();
         self.restore_stack.deinit();
         self.return_stack.deinit();
         self.stack.deinit();
@@ -936,6 +929,7 @@ pub const Thread = struct {
 
     //;
 
+    // NOTE: just moves value, does not dup it
     pub fn evaluateValue(self: *Self, value: Value, restore_ct: usize) Error!void {
         switch (value) {
             .Word => |idx| {
@@ -944,45 +938,28 @@ pub const Thread = struct {
                 //TODO make a different error for this
                 if (found_word) |val| {
                     if (val == .Word) return error.InternalError;
-                    try self.evaluateValue(val, 0);
+                    try self.evaluateValue(self.vm.dupValue(val), 0);
                 } else {
                     self.error_info.word_not_found = self.vm.symbol_table.items[idx];
                     return error.WordNotFound;
                 }
             },
             .Quotation => |q| {
-                // note: TCO
                 if (self.current_execution.len > 0 or restore_ct > 0) {
                     try self.return_stack.push(.{
                         .value = .{ .Quotation = self.current_execution },
                         .restore_ct = restore_ct,
-                        .has_callable = false,
                     });
                 }
                 self.current_execution = q;
             },
             .FFI_Fn => |fp| try fp.func(self),
-            .FFI_Ptr => |ptr| {
-                const ty = self.vm.type_table.items[ptr.type_id].ty;
-                if (ty.FFI.call_fn) |call_fn| {
-                    try self.return_stack.push(.{
-                        .value = .{ .Quotation = self.current_execution },
-                        .restore_ct = restore_ct,
-                        .has_callable = true,
-                    });
-                    try self.callables_stack.push(self.vm.dupValue(value));
-                    self.current_execution = call_fn(self, ptr);
-                } else {
-                    try self.stack.push(self.vm.dupValue(value));
-                }
-            },
-            else => try self.stack.push(self.vm.dupValue(value)),
+            else => try self.stack.push(value),
         }
     }
 
     pub fn readValue(self: *Self, value: Value) Error!void {
         switch (value) {
-            // TODO handle errors here, any errors besides allocator errors
             .Word => |idx| try self.evaluateValue(value, 0),
             else => |val| try self.stack.push(val),
         }
@@ -993,6 +970,8 @@ pub const Thread = struct {
             var value = self.current_execution[0];
             self.current_execution.ptr += 1;
             self.current_execution.len -= 1;
+            // TODO thread errors here, any errors besides allocator errors
+            //  readValue() shouldnt handle errors as `read` from within orth might do something different with them
             try self.readValue(value);
             return true;
         }
@@ -1002,14 +981,12 @@ pub const Thread = struct {
             if (rv.restore_ct == std.math.maxInt(usize)) {
                 return error.InvalidReturnValue;
             }
-            if (rv.has_callable) {
-                self.vm.dropValue(self.callables_stack.pop() catch unreachable);
-            }
 
             var i: usize = 0;
             while (i < rv.restore_ct) : (i += 1) {
                 try self.stack.push(self.restore_stack.pop() catch unreachable);
             }
+            // TODO checking current_execution len here could be used for tco
             self.current_execution = rv.value.Quotation;
             return true;
         } else {
