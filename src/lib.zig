@@ -11,7 +11,7 @@ const ArrayList = std.ArrayList;
 //   the vm deep copies strings
 // values returned from parse
 //   dont need to stay around for the life of the vm
-//   the vm deep copies quotations
+//   the vm deep copies slices
 
 // tokenizer syntax: " # : ;
 //    parser syntax: { } float int
@@ -54,14 +54,15 @@ const ArrayList = std.ArrayList;
 //   floats
 //     ignore nan and inf
 //   1234f 1234i
-// dont allow to define words that start with #
 // use "//" for comments instead of ";" ?
-// can return stack be used as restore stack?
-//   then you dont need >restore, can just use >R
+// intern slices
+// print contents of return stack
+// get rid of sentinel type
 
 // TODO want
 // prevent invalid symbols
 //   cant be parseable as numbers
+//   cant start with #
 //   symbols can't have spaces
 //     what about string>symbol ?
 // ffi threads
@@ -74,7 +75,6 @@ const ArrayList = std.ArrayList;
 //   multiline comments?
 //     could use ( )
 // records 100% in orth
-//   worry about display and eqv
 //   weak ptrs for cyclic "record-type" record
 //   auto generate doc strings
 // u64 type ?
@@ -311,9 +311,11 @@ pub const Tokenizer = struct {
         } else {
             // TODO star, heart
             if (std.mem.eql(u8, str, "space")) {
-                return '\n';
+                return ' ';
             } else if (std.mem.eql(u8, str, "tab")) {
                 return '\t';
+            } else if (std.mem.eql(u8, str, "newline")) {
+                return '\n';
             } else {
                 return error.InvalidCharEscape;
             }
@@ -530,11 +532,12 @@ pub const Value = union(enum) {
     String: []const u8,
     Word: usize,
     Symbol: usize,
-    Quotation: []const Value,
-    Array: []const Value,
+    Slice: []const Value,
     FFI_Fn: FFI_Fn,
     FFI_Ptr: FFI_Ptr,
 };
+
+pub const ValueType = @TagType(Value);
 
 //;
 
@@ -589,24 +592,13 @@ pub const ReturnValue = struct {
     restore_ct: usize,
 };
 
+pub const DefinedWord = struct {
+    value: Value,
+    eval_on_lookup: bool,
+};
+
 pub const VM = struct {
     const Self = @This();
-
-    // TODO get rid of this and use @TagType(Value) instead?
-    pub const BuiltInIds = enum {
-        Int,
-        Float,
-        Char,
-        Boolean,
-        Sentinel,
-        String,
-        Word,
-        Symbol,
-        Quotation,
-        Array,
-        FFI_Fn,
-        FFI_Ptr,
-    };
 
     pub const ErrorInfo = struct {
         word_not_found: []const u8,
@@ -616,15 +608,14 @@ pub const VM = struct {
     error_info: ErrorInfo,
 
     symbol_table: ArrayList([]const u8),
-    word_table: ArrayList(?Value),
+    word_table: ArrayList(?DefinedWord),
     type_table: ArrayList(OrthType),
 
     string_literals: ArrayList([]const u8),
     // note: this coud be a Stack([]const Value)
     //   but there is a zig bug
-    //   just going to use a Value that will always be a Value.Quotation
-    quotation_literals: ArrayList(Value),
-    array_literals: ArrayList(Value),
+    //   just going to use a Value that will always be a Value.Slice
+    slice_literals: ArrayList(Value),
 
     pub fn init(allocator: *Allocator) Allocator.Error!Self {
         var ret = Self{
@@ -632,15 +623,14 @@ pub const VM = struct {
             .error_info = undefined,
 
             .symbol_table = ArrayList([]const u8).init(allocator),
-            .word_table = ArrayList(?Value).init(allocator),
+            .word_table = ArrayList(?DefinedWord).init(allocator),
             .type_table = ArrayList(OrthType).init(allocator),
 
             .string_literals = ArrayList([]const u8).init(allocator),
-            .quotation_literals = ArrayList(Value).init(allocator),
-            .array_literals = ArrayList(Value).init(allocator),
+            .slice_literals = ArrayList(Value).init(allocator),
         };
         const PrimitiveTypeData = struct {
-            id: BuiltInIds,
+            id: ValueType,
             name: []const u8,
         };
         const primitive_types = [_]PrimitiveTypeData{
@@ -652,8 +642,7 @@ pub const VM = struct {
             .{ .id = .String, .name = "string-literal" },
             .{ .id = .Word, .name = "word" },
             .{ .id = .Symbol, .name = "symbol" },
-            .{ .id = .Quotation, .name = "quotation-literal" },
-            .{ .id = .Array, .name = "array-literal" },
+            .{ .id = .Slice, .name = "slice" },
             .{ .id = .FFI_Fn, .name = "ffi-fn" },
             .{ .id = .FFI_Ptr, .name = "ffi-ptr" },
         };
@@ -668,20 +657,22 @@ pub const VM = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        for (self.word_table.items) |val| {
-            if (val) |v| {
+        for (self.word_table.items) |dword| {
+            if (dword) |w| {
+                self.dropValue(w.value);
+            }
+        }
+
+        for (self.slice_literals.items) |val| {
+            for (val.Slice) |v| {
                 self.dropValue(v);
             }
         }
 
-        for (self.array_literals.items) |val| {
-            self.allocator.free(val.Array);
+        for (self.slice_literals.items) |val| {
+            self.allocator.free(val.Slice);
         }
-        self.array_literals.deinit();
-        for (self.quotation_literals.items) |val| {
-            self.allocator.free(val.Quotation);
-        }
-        self.quotation_literals.deinit();
+        self.slice_literals.deinit();
         for (self.string_literals.items) |str| {
             self.allocator.free(str);
         }
@@ -711,16 +702,16 @@ pub const VM = struct {
     }
 
     // TODO handle memory if theres an error
-    //   possible errors are allocator errors and quotation/array errors
+    //   possible errors are allocator errors and slice errors
     pub fn parse(self: *Self, tokens: []const Token) Allocator.Error![]Value {
         var ret = ArrayList(Value).init(self.allocator);
 
-        var literals_stack = Stack(ArrayList(Value)).init(self.allocator);
-        defer literals_stack.deinit();
+        var slice_stack = Stack(ArrayList(Value)).init(self.allocator);
+        defer slice_stack.deinit();
 
         for (tokens) |token| {
-            const append_to: *ArrayList(Value) = if (literals_stack.data.items.len > 0) blk: {
-                break :blk literals_stack.index(0) catch unreachable;
+            const append_to: *ArrayList(Value) = if (slice_stack.data.items.len > 0) blk: {
+                break :blk slice_stack.index(0) catch unreachable;
             } else &ret;
 
             switch (token.data) {
@@ -754,25 +745,16 @@ pub const VM = struct {
                 },
                 .Word => |word| {
                     if (std.mem.eql(u8, word, "{")) {
-                        try literals_stack.push(ArrayList(Value).init(self.allocator));
-                    } else if (std.mem.eql(u8, word, "}") or std.mem.eql(u8, word, "}q")) {
+                        try slice_stack.push(ArrayList(Value).init(self.allocator));
+                    } else if (std.mem.eql(u8, word, "}")) {
                         // TODO handle this error for stack underflow
-                        var q_array = literals_stack.pop() catch unreachable;
-                        const new_q = .{ .Quotation = q_array.toOwnedSlice() };
-                        try self.quotation_literals.append(new_q);
-                        if (literals_stack.data.items.len > 0) {
-                            try (literals_stack.index(0) catch unreachable).append(new_q);
+                        var slice_arraylist = slice_stack.pop() catch unreachable;
+                        const slice = .{ .Slice = slice_arraylist.toOwnedSlice() };
+                        try self.slice_literals.append(slice);
+                        if (slice_stack.data.items.len > 0) {
+                            try (slice_stack.index(0) catch unreachable).append(slice);
                         } else {
-                            try ret.append(new_q);
-                        }
-                    } else if (std.mem.eql(u8, word, "}a")) {
-                        var array = literals_stack.pop() catch unreachable;
-                        const new_a = .{ .Array = array.toOwnedSlice() };
-                        try self.array_literals.append(new_a);
-                        if (literals_stack.data.items.len > 0) {
-                            try (literals_stack.index(0) catch unreachable).append(new_a);
-                        } else {
-                            try ret.append(new_a);
+                            try ret.append(slice);
                         }
                     } else {
                         const try_parse_float =
@@ -828,9 +810,9 @@ pub const VM = struct {
 
     // TODO dupValue here?
     //   this is designed to be used from within zig not in ffi_fns
-    pub fn defineWord(self: *Self, name: []const u8, value: Value) Allocator.Error!void {
+    pub fn defineWord(self: *Self, name: []const u8, dword: DefinedWord) Allocator.Error!void {
         const idx = try self.internSymbol(name);
-        self.word_table.items[idx] = value;
+        self.word_table.items[idx] = dword;
     }
 };
 
@@ -857,6 +839,7 @@ pub const Thread = struct {
     error_info: ErrorInfo,
 
     current_execution: []const Value,
+    restore_ct: usize,
 
     stack: Stack(Value),
     return_stack: Stack(ReturnValue),
@@ -868,6 +851,7 @@ pub const Thread = struct {
             .error_info = undefined,
 
             .current_execution = values,
+            .restore_ct = 0,
 
             .stack = Stack(Value).init(vm.allocator),
             .return_stack = Stack(ReturnValue).init(vm.allocator),
@@ -877,6 +861,9 @@ pub const Thread = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        for (self.restore_stack.data.items) |val| {
+            self.vm.dropValue(val);
+        }
         for (self.stack.data.items) |val| {
             self.vm.dropValue(val);
         }
@@ -894,7 +881,8 @@ pub const Thread = struct {
             .Int => |val| std.debug.print("{}", .{val}),
             .Float => |val| std.debug.print("{d}f", .{val}),
             .Char => |val| switch (val) {
-                '\n' => std.debug.print("#\\space", .{}),
+                ' ' => std.debug.print("#\\space", .{}),
+                '\n' => std.debug.print("#\\newline", .{}),
                 '\t' => std.debug.print("#\\tab", .{}),
                 else => std.debug.print("#\\{c}", .{val}),
             },
@@ -906,17 +894,9 @@ pub const Thread = struct {
             .Symbol => |val| std.debug.print(":{}", .{self.vm.symbol_table.items[val]}),
             .Word => |val| std.debug.print("\\{}", .{self.vm.symbol_table.items[val]}),
             .String => |val| std.debug.print("\"{}\"L", .{val}),
-            .Quotation => |q| {
-                std.debug.print("q{{ ", .{});
-                for (q) |val| {
-                    self.nicePrintValue(val);
-                    std.debug.print(" ", .{});
-                }
-                std.debug.print("}}L", .{});
-            },
-            .Array => |a| {
-                std.debug.print("a{{ ", .{});
-                for (a) |val| {
+            .Slice => |slc| {
+                std.debug.print("{{ ", .{});
+                for (slc) |val| {
                     self.nicePrintValue(val);
                     std.debug.print(" ", .{});
                 }
@@ -934,24 +914,29 @@ pub const Thread = struct {
         switch (value) {
             .Word => |idx| {
                 const found_word = self.vm.word_table.items[idx];
-                // found_word can't be a word or this may loop
-                //TODO make a different error for this
-                if (found_word) |val| {
-                    if (val == .Word) return error.InternalError;
-                    try self.evaluateValue(self.vm.dupValue(val), 0);
+                if (found_word) |dword| {
+                    if (dword.eval_on_lookup) {
+                        // found_word can't be a word or this may loop
+                        //TODO make a different error for this
+                        if (dword.value == .Word) return error.InternalError;
+                        try self.evaluateValue(dword.value, 0);
+                    } else {
+                        try self.stack.push(self.vm.dupValue(dword.value));
+                    }
                 } else {
                     self.error_info.word_not_found = self.vm.symbol_table.items[idx];
                     return error.WordNotFound;
                 }
             },
-            .Quotation => |q| {
-                if (self.current_execution.len > 0 or restore_ct > 0) {
+            .Slice => |slc| {
+                if (!(self.current_execution.len == 0 and self.restore_ct == 0)) {
                     try self.return_stack.push(.{
-                        .value = .{ .Quotation = self.current_execution },
-                        .restore_ct = restore_ct,
+                        .value = .{ .Slice = self.current_execution },
+                        .restore_ct = self.restore_ct,
                     });
                 }
-                self.current_execution = q;
+                self.current_execution = slc;
+                self.restore_ct = restore_ct;
             },
             .FFI_Fn => |fp| try fp.func(self),
             else => try self.stack.push(value),
@@ -970,24 +955,28 @@ pub const Thread = struct {
             var value = self.current_execution[0];
             self.current_execution.ptr += 1;
             self.current_execution.len -= 1;
-            // TODO thread errors here, any errors besides allocator errors
+            // TODO handle thread errors here, any errors besides allocator errors
             //  readValue() shouldnt handle errors as `read` from within orth might do something different with them
             try self.readValue(value);
             return true;
         }
 
+        var i: usize = 0;
+        while (i < self.restore_ct) : (i += 1) {
+            try self.stack.push(try self.restore_stack.pop());
+        }
+
         if (self.return_stack.data.items.len > 0) {
             const rv = self.return_stack.pop() catch unreachable;
             if (rv.restore_ct == std.math.maxInt(usize)) {
+                // TODO this can happen with invalid restore count
+                //   or a word leaving things on the return stack
                 return error.InvalidReturnValue;
             }
 
-            var i: usize = 0;
-            while (i < rv.restore_ct) : (i += 1) {
-                try self.stack.push(self.restore_stack.pop() catch unreachable);
-            }
             // TODO checking current_execution len here could be used for tco
-            self.current_execution = rv.value.Quotation;
+            self.current_execution = rv.value.Slice;
+            self.restore_ct = rv.restore_ct;
             return true;
         } else {
             return false;

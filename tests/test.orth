@@ -1,72 +1,9 @@
-; 1 2 :a { + } dip .stack
+; { 1 + } :1plus @
+; 2 1plus .stack'
 
-:a :b :c :d [ :e :f ]vec
+{ .stack' .rstack' newline } :.. @
+
+{ swap >restore 1 .. eval,restore .. } :d2 #t def
+
+1 2 4 { .. + } d2
 .stack
-
-{
-
-{ :inc :stop :acc }a :counter @record
-
-{ { counter-acc } { counter-stop } bi <
-} :counter-should-continue? @
-
-{ { { counter-acc } { counter-inc } bi + } keep counter-acc!
-} :counter-increment! @
-
-; TODO make sure inc != 0
-{ 0 make-counter
-  { iterator-obj counter-should-continue? }
-  { dup should-continue?
-    { iterator-obj { counter-acc } { counter-increment! } bi #t }
-    { drop #f }
-    if
-    }
-  <iterator>
-} :count @
-
-1 5 count
-1 5 count
-{ { + } curry } map
-zip
-{ pair>stack eval } map
-vcollect!
-.stack
-
-
-
-;;
-
-; 2 5 count collect!
-; 2 5 count { 2 * } map collect!
-; 2 5 count 0 { + } fold!
-; .stack
-
-[ 1 2 3 4 5 ]vec vec-iter
-{ 1 - } map
-{ even? } filter
-0 { + } fold!
-.stack
-
-[ 1 2 3 4 5 ]vec vec-iter
-{ even? } filter
-"abcde" string-iter
-zip
-vcollect!
-.stack
-
-{
-[
-#x0000 addr
-:resets label
-:begin jmp
-nop nop
-nop nop
-nop nop
-nop nop
-
-#x0034 addr
-:begin label
-
-]vec
-} drop
-} drop

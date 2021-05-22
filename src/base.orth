@@ -1,6 +1,16 @@
-; todo add more documentation
+; TODO
+;   add more documentation
+;   @alias
+;     { ref unwrap } dip @
+;   rename bi* bi^ to bis and bia
+;   scollect!
+;   return stack accessors
 
-<map> :doc-table @
+; { dup value-type-of :quotation-literal eq? def } :@ #t def
+{ #t def } :@ #t def
+{ #f def } :@value @
+
+<map> :doc-table @value
 { doc-table mset! } :doc! @
 { doc-table mget* "docstring not found" unwrap,default } :doc @
 
@@ -16,18 +26,6 @@
 "( symbol -- )\nprint documentation for a word"
 @doc
 
-{ dup value-type-of :ffi-ptr eq?
-  { dup ffi-type-of :record eq?
-    { dup record-type-of :callable eq?
-      { { callable-data } { callable-q eval } bi }
-      { eval' }
-      ? eval' }
-    { eval' }
-    ? eval' }
-  { eval' }
-  ? eval'
-} :eval @
-
 ; TODO
 ; { over value-type-of :ffi-ptr eq?
   ; { over ffi-type-of :record eq?
@@ -41,6 +39,18 @@
   ; { eval,restore' }
   ; if }
 ; } :eval,restore @
+
+{ dup value-type-of :ffi-ptr eq?
+  { dup ffi-type-of :record eq?
+    { dup record-type-of :callable eq?
+      { { callable-data } { callable-q eval } bi }
+      { eval' }
+      ? eval' }
+    { eval' }
+    ? eval' }
+  { eval' }
+  ? eval'
+} :eval @
 
 { ref unwrap eval
 } :exec
@@ -240,8 +250,7 @@
 { value-type-of :string-literal eq? } :string-literal? @
 { value-type-of :word eq? } :word? @
 { value-type-of :symbol eq? } :symbol? @
-{ value-type-of :quotation-literal eq? } :quotation-literal? @
-{ value-type-of :array-literal eq? } :array-literal? @
+{ value-type-of :slice eq? } :slice? @
 { value-type-of :ffi-fn eq? } :ffi-fn? @
 { value-type-of :ffi-ptr eq? } :ffi-ptr? @
 
@@ -316,7 +325,8 @@
 
 ; TODO for now this needs to be here because of unwrap
 ; fix that and move back up by eval
-:eval,restore' ref unwrap :eval,restore @
+; :eval,restore' ref unwrap :eval,restore @
+{ eval,restore' } :eval,restore @
 
 ; =====
 
@@ -355,14 +365,15 @@
 ;   chunks iterator
 ;     array>map for 'map literals'
 
-{ :obj :check :next }a :iterator @record
-:make-iterator ref unwrap :<iterator> @
+{ :obj :check :next } :iterator @record
+; :make-iterator ref unwrap :<iterator> @
+{ make-iterator } :<iterator> @
 { dup iterator-check eval } :should-continue? @
 { dup iterator-next eval } :next! @
 
 ;
 
-{ :val }a :alwayser @record
+{ :val } :alwayser @record
 { make-alwayser
   { drop #t }
   { iterator-obj alwayser-val #t }
@@ -371,7 +382,7 @@
 
 ;
 
-{ :iter :fn }a :mapper @record
+{ :iter :fn } :mapper @record
 { make-mapper
   { iterator-obj mapper-iter should-continue? }
   { dup should-continue?
@@ -390,7 +401,7 @@
 
 ;
 
-{ :iter :fn }a :filterer @record
+{ :iter :fn } :filterer @record
 { make-filterer
   { iterator-obj filterer-iter should-continue? }
   { dup should-continue?
@@ -417,7 +428,7 @@
     { drop }
     if
     each! }
-  { drop }
+  { 2drop }
   if
 } :each!
 "( iter q -- )"
@@ -439,13 +450,16 @@
 
 ;
 
-{ :first :second }a :pair @record
-:make-pair ref unwrap :<pair> @
+; TODO fix zip
+
+{ :first :second } :pair @record
+; :make-pair ref unwrap :<pair> @
+{ make-pair } :<pair> @
 
 { { pair-first } { pair-second } bi
 } :pair>stack @
 
-{ :a :b }a :zipper @record
+{ :a :b } :zipper @record
 
 { { zipper-a } { zipper-b } bi { should-continue? } both?
 } :zipper-should-continue? @
@@ -466,47 +480,7 @@
 
 ;
 
-{ :vec :at }a :vec-iterator @record
-
-{ { vec-iterator-at } { vec-iterator-vec } bi vget
-} :vec-iterator-get-value @
-
-{ { vec-iterator-at 1 + } { vec-iterator-at! } bi
-} :vec-iterator-increment! @
-
-{ 0 make-vec-iterator
-  { iterator-obj { vec-iterator-at } { vec-iterator-vec vlen } bi < }
-  { dup should-continue?
-    { iterator-obj { vec-iterator-get-value } { vec-iterator-increment! } bi #t }
-    { drop #f #f }
-    if
-    }
-  <iterator>
-} :vec-iter @
-
-;
-
-{ :str :at }a :string-iterator @record
-
-{ { string-iterator-at } { string-iterator-str } bi sget
-} :string-iterator-get-value @
-
-{ { string-iterator-at 1 + } { string-iterator-at! } bi
-} :string-iterator-increment! @
-
-{ 0 make-string-iterator
-  { iterator-obj { string-iterator-at } { string-iterator-str slen } bi < }
-  { dup should-continue?
-    { iterator-obj { string-iterator-get-value } { string-iterator-increment! } bi #t }
-    { drop #f #f }
-    if
-    }
-  <iterator>
-} :string-iter @
-
-;
-
-{ :inc :stop :acc }a :counter @record
+{ :inc :stop :acc } :counter @record
 
 { { counter-acc } { counter-stop } bi <
 } :counter-should-continue? @
@@ -528,25 +502,58 @@
 
 ;
 
+{ { 1 swap count } { always } bi*
+  zip
+} :sequence-iter
+"( len seq -- iter )"
+@doc
+
+{ { slen } keep sequence-iter
+  { pair>stack sget } map
+} :slice-iter @
+
+{ { vlen } keep sequence-iter
+  { pair>stack vget } map
+} :vec-iter @
+
+{ { strlen } keep sequence-iter
+  { pair>stack strget } map
+} :string-iter @
+
 { stack-len { always } { 1 swap count } bi
   zip
   { pair>stack - 1 - } map
 } :stack-iter @
 
+; TODO write these in zig
+
+{ slice-iter vcollect!
+} :slice>vec @
+
+{ string-iter vcollect!
+} :string>vec @
+
 ; =====
 
-{ :data :q }a :callable @record
+{ :data :q } :callable @record
 
-{ :saved-val :q }a :curried @record
+{ :saved-val :q } :curried @record
 
 { make-curried
   { { curried-saved-val } { curried-q eval } bi }
   make-callable
 } :curry @
 
-{ :p :q }a :composed @record
+{ :p :q } :composed @record
 
 { make-composed
   { { composed-p eval } { composed-q eval } bi }
   make-callable
 } :compose @
+
+; =====
+
+; TODO
+; :in <file>,std unwrap :stdin @
+; :out <file>,std unwrap :stdout @
+; :err <file>,std unwrap :stderr @

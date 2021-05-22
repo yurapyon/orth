@@ -17,17 +17,29 @@ pub fn something(allocator: *Allocator) !void {
     var vm = try VM.init(allocator);
     defer vm.deinit();
 
-    try vm.defineWord("#t", .{ .Boolean = true });
-    try vm.defineWord("#f", .{ .Boolean = false });
-    try vm.defineWord("#sentinel", .{ .Sentinel = {} });
+    try vm.defineWord("#t", .{
+        .value = .{ .Boolean = true },
+        .eval_on_lookup = false,
+    });
+    try vm.defineWord("#f", .{
+        .value = .{ .Boolean = false },
+        .eval_on_lookup = false,
+    });
+    try vm.defineWord("#sentinel", .{
+        .value = .{ .Sentinel = {} },
+        .eval_on_lookup = false,
+    });
 
     for (builtins.builtins) |bi| {
         const idx = try vm.internSymbol(bi.name);
-        vm.word_table.items[idx] = Value{
-            .FFI_Fn = .{
-                .name = idx,
-                .func = bi.func,
+        vm.word_table.items[idx] = .{
+            .value = .{
+                .FFI_Fn = .{
+                    .name = idx,
+                    .func = bi.func,
+                },
             },
+            .eval_on_lookup = true,
         };
     }
 
@@ -35,6 +47,7 @@ pub fn something(allocator: *Allocator) !void {
     try builtins.ft_record.install(&vm);
     try builtins.ft_vec.install(&vm);
     try builtins.ft_map.install(&vm);
+    try builtins.ft_file.install(&vm);
 
     {
         var f = try readFile(allocator, "src/base.orth");
@@ -102,8 +115,8 @@ pub fn something(allocator: *Allocator) !void {
                     },
                     else => {
                         std.log.warn("err: {}", .{err});
-                        // return err;
-                        return;
+                        return err;
+                        // return;
                     },
                 }
             };

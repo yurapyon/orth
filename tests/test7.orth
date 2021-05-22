@@ -1,0 +1,151 @@
+; 1 2 :a :b { + } 2dip .stack
+
+; "asdf" string-iter
+; vcollect!
+; .stack
+
+; "r" "todo" <file>,open .stack
+; drop
+; file-read-all
+; .stack
+
+{ { eval } def } :@ { eval } def
+
+{ 1 + } :1plus { eval } def
+{ 1 + } :1plus @
+
+{ 1 2 3 4 }
+:array
+{ } ; automatically does this on lookup
+def
+
+{ 2dup alen 1 - >=
+  { aget eval }
+  { 2dup aget
+    ; n arr branch
+    0 swap aget 2dip
+    ; #t/f n arr
+    rot<
+    { aget 1 swap aget eval }
+    { { 1 + } dip cond' }
+    if }
+  if
+} :cond'
+; ( n arr -- )
+@
+
+{ 0 swap cond'
+} :cond @
+
+{
+{ { { dup 0 > } { drop :pos } }a
+  { { dup 0 < } { drop :neg } }a
+  { drop :zero }
+}a cond
+} :tst @
+
+5 tst
+0 tst
+-5 tst
+.stack
+
+stderr
+"asdf\n" swap file-write-all
+.stack
+
+1 5 count
+{ 0 swap rget } always
+zip
+{ pair>stack quotation>vec
+  { 0 swap vset! } keep
+  vec>quotation
+} map
+vcollect!
+.stack
+
+{ 1 2 3 4 } quotation-iter vcollect! { 5 swap vpush! } keep
+vec>quotation
+:five @
+
+five
+.stack
+
+; <vec>
+; { 1 swap vpush! } keep
+; { 2 swap vpush! } keep
+  ; 3 swap vpush!
+; .stack
+
+; :a :b :c :d [ :e :f ]vec
+; .stack
+
+; "asdf" value-type-of
+; .stack
+
+{
+
+{ :inc :stop :acc }a :counter @record
+
+{ { counter-acc } { counter-stop } bi <
+} :counter-should-continue? @
+
+{ { { counter-acc } { counter-inc } bi + } keep counter-acc!
+} :counter-increment! @
+
+; TODO make sure inc != 0
+{ 0 make-counter
+  { iterator-obj counter-should-continue? }
+  { dup should-continue?
+    { iterator-obj { counter-acc } { counter-increment! } bi #t }
+    { drop #f }
+    if
+    }
+  <iterator>
+} :count @
+
+1 5 count
+1 5 count
+{ { + } curry } map
+zip
+{ pair>stack eval } map
+vcollect!
+.stack
+
+
+
+;;
+
+; 2 5 count collect!
+; 2 5 count { 2 * } map collect!
+; 2 5 count 0 { + } fold!
+; .stack
+
+[ 1 2 3 4 5 ]vec vec-iter
+{ 1 - } map
+{ even? } filter
+0 { + } fold!
+.stack
+
+[ 1 2 3 4 5 ]vec vec-iter
+{ even? } filter
+"abcde" string-iter
+zip
+vcollect!
+.stack
+
+{
+[
+#x0000 addr
+:resets label
+:begin jmp
+nop nop
+nop nop
+nop nop
+nop nop
+
+#x0034 addr
+:begin label
+
+]vec
+} drop
+} drop
