@@ -5,12 +5,13 @@
 ;   rename bi* bi^ to bis and bia
 ;   scollect!
 ;   return stack accessors
+;   over can be written like { dup } dip swap
+;     pick can probably be done like this too
 
-; { dup value-type-of :quotation-literal eq? def } :@ #t def
-{ #t def } :@ #t def
+{ over value-type-of :slice eq? def } :@ #t def
 { #f def } :@value @
 
-<map> :doc-table @value
+<map> :doc-table @
 { doc-table mset! } :doc! @
 { doc-table mget* "docstring not found" unwrap,default } :doc @
 
@@ -226,9 +227,29 @@
 { { } if } :when @
 { { } swap if } :unless @
 
+{ 2dup slen 1 - >=
+  { sget eval }
+  { 2dup sget
+    ; n arr branch
+    0 swap sget 2dip
+    ; #t/f n arr
+    rot<
+    { sget 1 swap sget eval }
+    { { 1 + } dip cond' }
+    if }
+  if
+} :cond'
+; ( n slice -- )
+@
+
+{ 0 swap cond'
+} :cond @
+
+
 ; TODO
 ; ?if
-; cond case
+; case ?
+;   cond is probably fine
 
 ; types ==
 
@@ -553,7 +574,6 @@
 
 ; =====
 
-; TODO
-; :in <file>,std unwrap :stdin @
-; :out <file>,std unwrap :stdout @
-; :err <file>,std unwrap :stderr @
+:in <file>,std unwrap :stdin @
+:out <file>,std unwrap :stdout @
+:err <file>,std unwrap :stderr @

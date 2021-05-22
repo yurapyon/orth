@@ -1,9 +1,57 @@
-; { 1 + } :1plus @
-; 2 1plus .stack'
+{ 1 swap count
+  { drop #f } map
+  vcollect!
+} :<record>' @
 
-{ .stack' .rstack' newline } :.. @
+{ 0 swap vget
+} :record-type-type @
 
-{ swap >restore 1 .. eval,restore .. } :d2 #t def
+{ 1 swap vget
+} :record-type-name @
 
-1 2 4 { .. + } d2
+{ 2 swap vget
+} :record-type-field-tags @
+
+3 <record>'
+{ #f swap 0 swap vset! } keep
+{ :record-type swap 1 swap vset! } keep
+{ { :name :field-tags } swap 2 swap vset! } keep
+:%record-type @
+
+{ 3 <record>'
+  { { %record-type swap 0 swap vset! }
+    { 1 swap vset! }
+    { 2 swap vset! }
+    tri } keep
+} :<record-type> @
+
+{ :char :lock } :cell <record-type> :%cell @
+
+%cell
+.stack
+
+
+
+
+{
+{ { { dup 0 > } { drop :pos } }
+  { { dup 0 < } { drop :neg } }
+  { drop :zero }
+} cond
+} :tst @
+
+5 tst
+0 tst
+-5 tst
+.stack
+
+1 :one @
+<map> :v @
+
+{ 1 2 3 } :one-two-three @value
+
+one-two-three
+one
+"asdf" :a v mset!
+v
 .stack

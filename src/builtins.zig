@@ -19,6 +19,7 @@ usingnamespace lib;
 
 // just use a number type instead of ints and floats?
 //   gets around type checking for math fns
+//   makes bitwise operators weird
 
 // TODO need
 // ports
@@ -44,6 +45,8 @@ usingnamespace lib;
 // types
 //   make sure accessing them from within zig is easy
 // short circuiting and and or
+// more ways to print vm info
+//   word table
 
 // TODO want
 // functions

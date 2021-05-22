@@ -78,6 +78,7 @@ const ArrayList = std.ArrayList;
 //   weak ptrs for cyclic "record-type" record
 //   auto generate doc strings
 // u64 type ?
+// dlsym ffi would be cool
 
 //;
 
@@ -919,7 +920,7 @@ pub const Thread = struct {
                         // found_word can't be a word or this may loop
                         //TODO make a different error for this
                         if (dword.value == .Word) return error.InternalError;
-                        try self.evaluateValue(dword.value, 0);
+                        try self.evaluateValue(self.vm.dupValue(dword.value), 0);
                     } else {
                         try self.stack.push(self.vm.dupValue(dword.value));
                     }
