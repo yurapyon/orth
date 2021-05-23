@@ -424,7 +424,7 @@
 } :record-type-field-tags @
 
 3 <record>
-{ { rdowngrade } keep 0 swap rset! } keep
+{ { downgrade } keep 0 swap rset! } keep
 { :record-type swap 1 swap rset! } keep
 { { :name :field-tags } swap 2 swap rset! } keep
 :%record-type @

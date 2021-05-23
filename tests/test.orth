@@ -1,3 +1,9 @@
+%record-type
+.stack'
+
+
+{
+
 ; { :char :lock } :cell <record-type> :%cell @
 
 ; :chch :lolo %cell construct :c @
@@ -31,8 +37,6 @@
 :d slc index-of,eq
 
 .stack'
-
-{
 
 
 {

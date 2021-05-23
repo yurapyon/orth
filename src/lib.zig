@@ -535,12 +535,107 @@ pub const Value = union(enum) {
     Symbol: usize,
     Slice: []const Value,
     FFI_Fn: FFI_Fn,
+    Rc_Ptr: Rc_Ptr,
     FFI_Ptr: FFI_Ptr,
 };
 
 pub const ValueType = @TagType(Value);
 
 //;
+
+pub const Rc_ = struct {
+    const Self = @This();
+
+    pub const Ptr = opaque {};
+
+    // TODO have type_id here too? / only?
+    ptr: *Ptr,
+    ref_ct: usize,
+
+    pub fn init(ptr: anytype) Self {
+        return .{
+            .ptr = @ptrCast(*Ptr, ptr),
+            .ref_ct = 0,
+        };
+    }
+
+    pub fn makeOne(allocator: *Allocator, ptr: anytype) Allocator.Error!*Self {
+        var rc = try allocator.create(Self);
+        rc.* = Self.init(ptr);
+        rc.inc();
+        return rc;
+    }
+
+    pub fn inc(self: *Self) void {
+        self.ref_ct += 1;
+    }
+
+    // returns if the obj is alive or not
+    pub fn dec(self: *Self) bool {
+        std.debug.assert(self.ref_ct > 0);
+        self.ref_ct -= 1;
+        return self.ref_ct != 0;
+    }
+
+    //     pub fn cast(self: Self, comptime T: type) *T {
+    //         return @ptrCast(*T, @alignCast(@alignOf(T), self.ptr));
+    //     }
+};
+
+pub const Rc_Ptr = struct {
+    const Self = @This();
+
+    type_id: usize,
+    rc: *Rc_,
+    is_weak: bool,
+
+    //     pub fn upgrade(self: *Self) void {
+    //         // TODO assert or return error that is_weak
+    //         self.is_weak = false;
+    //         self.rc.inc();
+    //     }
+    //
+    //     pub fn downgrade(self: *Self) bool {
+    //         // TODO assert or return error that ! is_weak
+    //         self.is_weak = true;
+    //         return self.rc.dec();
+    //     }
+
+    pub fn cast(self: Self, comptime T: type) *T {
+        return @ptrCast(*T, @alignCast(@alignOf(T), self.rc.ptr));
+    }
+};
+
+pub const Rc_Type = struct {
+    display_fn: fn (*Thread, Rc_Ptr) void = defaultDisplay,
+    display_weak_fn: fn (*Thread, Rc_Ptr) void = defaultDisplayWeak,
+    equivalent_fn: fn (*Thread, Rc_Ptr, Value) bool = defaultEquivalent,
+    finalize_fn: fn (*VM, Rc_Ptr) void = defaultFinalize,
+
+    fn defaultDisplay(t: *Thread, ptr: Rc_Ptr) void {
+        const name_id = t.vm.type_table.items[ptr.type_id].name_id;
+        std.debug.print("rc@({} {})", .{
+            t.vm.symbol_table.items[name_id],
+            // TODO ptr to int
+            ptr.rc.ptr,
+        });
+    }
+
+    fn defaultDisplayWeak(t: *Thread, ptr: Rc_Ptr) void {
+        const name_id = t.vm.type_table.items[ptr.type_id].name_id;
+        std.debug.print("rc-weak@({} {})", .{
+            t.vm.symbol_table.items[name_id],
+            // TODO ptr to int
+            ptr.rc.ptr,
+        });
+    }
+
+    fn defaultEquivalent(t: *Thread, ptr: Rc_Ptr, val: Value) bool {
+        return false;
+    }
+
+    fn defaultFinalize(t: *VM, ptr: Rc_Ptr) void {}
+};
 
 pub const FFI_Type = struct {
     display_fn: fn (*Thread, FFI_Ptr) void = defaultDisplay,
@@ -572,10 +667,12 @@ pub const FFI_Type = struct {
 pub const OrthType = struct {
     pub const Type = union(enum) {
         Primitive,
+        Rc: Rc_Type,
         FFI: FFI_Type,
     };
 
     ty: Type,
+    // TODO is this used anywhere?
     name_id: usize = undefined,
 };
 
@@ -638,6 +735,7 @@ pub const VM = struct {
             .{ .id = .Symbol, .name = "symbol" },
             .{ .id = .Slice, .name = "slice" },
             .{ .id = .FFI_Fn, .name = "ffi-fn" },
+            .{ .id = .Rc_Ptr, .name = "rc-ptr" },
             .{ .id = .FFI_Ptr, .name = "ffi-ptr" },
         };
         for (primitive_types) |p| {
@@ -778,6 +876,13 @@ pub const VM = struct {
 
     pub fn dupValue(self: *Self, val: Value) Value {
         switch (val) {
+            .Rc_Ptr => |ptr| {
+                if (!ptr.is_weak) {
+                    ptr.rc.inc();
+                }
+
+                return val;
+            },
             .FFI_Ptr => |ptr| return .{
                 .FFI_Ptr = self.type_table.items[ptr.type_id].ty.FFI.dup_fn(self, ptr),
             },
@@ -786,9 +891,17 @@ pub const VM = struct {
     }
 
     pub fn dropValue(self: *Self, val: Value) void {
-        if (val == .FFI_Ptr) {
-            const ptr = val.FFI_Ptr;
-            self.type_table.items[ptr.type_id].ty.FFI.drop_fn(self, ptr);
+        switch (val) {
+            .Rc_Ptr => |ptr| {
+                if (!ptr.is_weak and !ptr.rc.dec()) {
+                    self.type_table.items[ptr.type_id].ty.Rc.finalize_fn(self, ptr);
+                    self.allocator.destroy(ptr.rc);
+                }
+            },
+            .FFI_Ptr => |ptr| {
+                self.type_table.items[ptr.type_id].ty.FFI.drop_fn(self, ptr);
+            },
+            else => {},
         }
     }
 
@@ -900,6 +1013,14 @@ pub const Thread = struct {
                 std.debug.print("}}L", .{});
             },
             .FFI_Fn => |val| std.debug.print("fn({})", .{self.vm.symbol_table.items[val.name]}),
+            .Rc_Ptr => |ptr| {
+                const ty = self.vm.type_table.items[ptr.type_id].ty.Rc;
+                if (ptr.is_weak) {
+                    ty.display_weak_fn(self, ptr);
+                } else {
+                    ty.display_fn(self, ptr);
+                }
+            },
             .FFI_Ptr => |ptr| self.vm.type_table.items[ptr.type_id].ty.FFI.display_fn(self, ptr),
         }
     }

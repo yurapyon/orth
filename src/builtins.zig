@@ -201,6 +201,14 @@ fn displayValue(t: *Thread, value: Value) void {
             std.debug.print("}}", .{});
         },
         .FFI_Fn => |val| std.debug.print("fn({})", .{t.vm.symbol_table.items[val.name]}),
+        .Rc_Ptr => |ptr| {
+            const ty = t.vm.type_table.items[ptr.type_id].ty.Rc;
+            if (ptr.is_weak) {
+                ty.display_weak_fn(t, ptr);
+            } else {
+                ty.display_fn(t, ptr);
+            }
+        },
         .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.display_fn(t, ptr),
     }
 }
@@ -531,6 +539,9 @@ fn areValuesEqual(a: Value, b: Value) bool {
             val.len == b.Slice.len,
         .FFI_Fn => |ptr| ptr.name == b.FFI_Fn.name and
             ptr.func == b.FFI_Fn.func,
+        .Rc_Ptr => |ptr| ptr.type_id == b.Rc_Ptr.type_id and
+            ptr.rc == b.Rc_Ptr.rc and
+            ptr.is_weak == b.Rc_Ptr.is_weak,
         .FFI_Ptr => |ptr| ptr.type_id == b.FFI_Ptr.type_id and
             ptr.ptr == b.FFI_Ptr.ptr,
     } else false;
@@ -565,6 +576,7 @@ fn areValuesEquivalent(t: *Thread, a: Value, b: Value) bool {
             }
             break :blk true;
         },
+        .Rc_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].ty.Rc.equivalent_fn(t, ptr, b),
         .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.equivalent_fn(t, ptr, b),
     } else blk: {
         // TODO
@@ -769,6 +781,70 @@ pub fn Rc(comptime T: type) type {
         }
     };
 }
+
+// rc_test ==
+
+pub fn f_downgrade(t: *Thread) Thread.Error!void {
+    const this = try t.stack.index(0);
+    if (this.* != .Rc_Ptr) return error.TypeError;
+    var ptr = &this.*.Rc_Ptr;
+    const ref_ct = ptr.rc.ref_ct;
+    t.vm.dropValue(this.*);
+    if (ref_ct > 1) {
+        ptr.is_weak = true;
+    }
+}
+
+pub fn f_upgrade(t: *Thread) Thread.Error!void {
+    const this = try t.stack.index(0);
+    if (this.* != .Rc_Ptr) return error.TypeError;
+    var ptr = &this.*.Rc_Ptr;
+    ptr.is_weak = false;
+    ptr.rc.inc();
+}
+
+// pub const ft_int = struct {
+//     const Self = @This();
+//
+//     pub const Int = u8;
+//
+//     var type_id: usize = undefined;
+//
+//     pub fn install(vm: *VM) Allocator.Error!void {
+//         type_id = try vm.installType("box-int", .{
+//             .ty = .{
+//                 .Rc = .{
+//                     .display_fn = display,
+//                     .finalize_fn = finalize,
+//                 },
+//             },
+//         });
+//     }
+//
+//     pub fn display(t: *Thread, ptr: Rc_Ptr) void {
+//         const i = ptr.cast(Int);
+//         std.debug.print("box({} {})", .{ i, i.* });
+//     }
+//
+//     pub fn finalize(vm: *VM, ptr: Rc_Ptr) void {
+//         var i = ptr.cast(Int);
+//         vm.allocator.destroy(i);
+//     }
+//
+//     //;
+//
+//     pub fn _make(t: *Thread) Thread.Error!void {
+//         var i = try t.vm.allocator.create(u8);
+//         i.* = 3;
+//         try t.stack.push(.{
+//             .Rc_Ptr = .{
+//                 .type_id = type_id,
+//                 .rc = try Rc_.makeOne(t.vm.allocator, i),
+//                 .is_weak = false,
+//             },
+//         });
+//     }
+// };
 
 // string ===
 
@@ -977,110 +1053,76 @@ pub const ft_record = struct {
     pub const Record = []Value;
 
     var type_id: usize = undefined;
-    var weak_type_id: usize = undefined;
 
     pub fn install(vm: *VM) Allocator.Error!void {
-        type_id = try vm.installType("record2", .{
+        type_id = try vm.installType("record", .{
             .ty = .{
-                .FFI = .{
+                .Rc = .{
                     .display_fn = display,
-                    .dup_fn = dup,
-                    .drop_fn = drop,
-                },
-            },
-        });
-        weak_type_id = try vm.installType("weak-record2", .{
-            .ty = .{
-                .FFI = .{
-                    .display_fn = display_weak,
+                    .display_weak_fn = display_weak,
+                    .finalize_fn = finalize,
                 },
             },
         });
     }
 
-    pub fn display(t: *Thread, ptr: FFI_Ptr) void {
-        const rc = ptr.cast(Rc(Record));
+    pub fn display(t: *Thread, ptr: Rc_Ptr) void {
+        const rec = ptr.cast(Record);
         std.debug.print("r< ", .{});
-        for (rc.obj) |v| {
+        for (rec.*) |v| {
             t.nicePrintValue(v);
             std.debug.print(" ", .{});
         }
         std.debug.print(">", .{});
     }
 
-    pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
-        var rc = ptr.cast(Rc(Record));
-        rc.inc();
-        return .{
-            .type_id = type_id,
-            .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-        };
+    pub fn display_weak(t: *Thread, ptr: Rc_Ptr) void {
+        const rec = ptr.cast(Record);
+        std.debug.print("r@({x} {})", .{ @ptrToInt(rec), rec.len });
     }
 
-    pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
-        var rc = ptr.cast(Rc(Record));
-        if (!rc.dec()) {
-            for (rc.obj) |val| {
-                vm.dropValue(val);
-            }
-            vm.allocator.free(rc.obj);
-            vm.allocator.destroy(rc);
+    pub fn finalize(vm: *VM, ptr: Rc_Ptr) void {
+        var rec = ptr.cast(Record);
+        for (rec.*) |val| {
+            vm.dropValue(val);
         }
+        vm.allocator.free(rec.*);
+        vm.allocator.destroy(rec);
     }
 
-    pub fn display_weak(t: *Thread, ptr: FFI_Ptr) void {
-        const rc = ptr.cast(Rc(Record));
-        std.debug.print("r@({x} {})", .{ @ptrToInt(rc), rc.obj.len });
-    }
+    //;
 
     pub fn _make(t: *Thread) Thread.Error!void {
         const slot_ct = try t.stack.pop();
         if (slot_ct != .Int) return error.TypeError;
 
-        var rc = try Rc(Record).makeOne(t.vm.allocator);
-        rc.obj = try t.vm.allocator.alloc(Value, @intCast(usize, slot_ct.Int));
-        for (rc.obj) |*v| {
+        var rec = try t.vm.allocator.create(Record);
+        var data = try t.vm.allocator.alloc(Value, @intCast(usize, slot_ct.Int));
+        for (data) |*v| {
             v.* = .{ .Sentinel = {} };
         }
+        rec.* = data;
+
+        var rc = try Rc_.makeOne(t.vm.allocator, rec);
         try t.stack.push(.{
-            .FFI_Ptr = .{
+            .Rc_Ptr = .{
                 .type_id = type_id,
-                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+                .rc = rc,
+                .is_weak = false,
             },
         });
-    }
-
-    pub fn _downgrade(t: *Thread) Thread.Error!void {
-        const this = try t.stack.index(0);
-        if (this.* != .FFI_Ptr) return error.TypeError;
-        if (this.*.FFI_Ptr.type_id != type_id) return error.TypeError;
-        const rc = this.FFI_Ptr.cast(Rc(Record));
-        const ref_ct = rc.ref_ct;
-        t.vm.dropValue(this.*);
-        if (ref_ct > 1) {
-            this.*.FFI_Ptr.type_id = weak_type_id;
-        }
-    }
-
-    pub fn _upgrade(t: *Thread) Thread.Error!void {
-        const this = try t.stack.index(0);
-        if (this.* != .FFI_Ptr) return error.TypeError;
-        if (this.*.FFI_Ptr.type_id != weak_type_id) return error.TypeError;
-        this.*.FFI_Ptr.type_id = type_id;
-        var rc = this.*.FFI_Ptr.cast(Rc(Record));
-        rc.inc();
     }
 
     pub fn _set(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const idx = try t.stack.pop();
         const val = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
         if (idx != .Int) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(Record));
-        rc.obj[@intCast(usize, idx.Int)] = val;
+        var rec = this.Rc_Ptr.cast(Record);
+        rec.*[@intCast(usize, idx.Int)] = val;
 
         t.vm.dropValue(this);
     }
@@ -1088,12 +1130,12 @@ pub const ft_record = struct {
     pub fn _get(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const idx = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
         if (idx != .Int) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(Record));
-        try t.stack.push(t.vm.dupValue(rc.obj[@intCast(usize, idx.Int)]));
+        var rec = this.Rc_Ptr.cast(Record);
+        try t.stack.push(t.vm.dupValue(rec.*[@intCast(usize, idx.Int)]));
 
         t.vm.dropValue(this);
     }
@@ -1682,6 +1724,9 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "slen", .func = f_slice_len },
     .{ .name = "sget", .func = f_slice_get },
 
+    .{ .name = "downgrade", .func = f_downgrade },
+    .{ .name = "upgrade", .func = f_upgrade },
+
     .{ .name = "<string>", .func = ft_string._make },
     .{ .name = "<string>,clone", .func = ft_string._clone },
     .{ .name = "string-append!", .func = ft_string._append_in_place },
@@ -1692,8 +1737,6 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "<record>", .func = ft_record._make },
     .{ .name = "rset!", .func = ft_record._set },
     .{ .name = "rget", .func = ft_record._get },
-    .{ .name = "rdowngrade", .func = ft_record._downgrade },
-    .{ .name = "rupgrade", .func = ft_record._upgrade },
 
     .{ .name = "<vec>", .func = ft_vec._make },
     .{ .name = "<vec>,capacity", .func = ft_vec._make_capacity },

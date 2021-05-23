@@ -44,7 +44,6 @@ pub fn something(allocator: *Allocator) !void {
     }
 
     try builtins.ft_string.install(&vm);
-    // try builtins.ft_record.install(&vm);
     try builtins.ft_record.install(&vm);
     try builtins.ft_vec.install(&vm);
     try builtins.ft_map.install(&vm);
