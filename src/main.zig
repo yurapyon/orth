@@ -44,6 +44,7 @@ pub fn something(allocator: *Allocator) !void {
     }
 
     try builtins.ft_string.install(&vm);
+    // try builtins.ft_record.install(&vm);
     try builtins.ft_record.install(&vm);
     try builtins.ft_vec.install(&vm);
     try builtins.ft_map.install(&vm);
@@ -71,8 +72,7 @@ pub fn something(allocator: *Allocator) !void {
             switch (err) {
                 error.WordNotFound => {
                     std.log.warn("word not found: {}", .{t.error_info.word_not_found});
-                    // return err;
-                    return;
+                    return err;
                 },
                 else => return err,
             }
@@ -107,16 +107,11 @@ pub fn something(allocator: *Allocator) !void {
                 switch (err) {
                     error.WordNotFound => {
                         std.log.warn("word not found: {}", .{t.error_info.word_not_found});
-                        // return err;
-                        return;
-                    },
-                    error.TypeError => {
                         return err;
                     },
                     else => {
                         std.log.warn("err: {}", .{err});
                         return err;
-                        // return;
                     },
                 }
             };

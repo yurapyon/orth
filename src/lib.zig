@@ -38,6 +38,7 @@ const ArrayList = std.ArrayList;
 //     string_indent need to be updated
 
 // rcs cant really be a built in type?
+// they can probably be builtin
 //   even though it would be nice to abstract some of the code out
 //   if you make rcs built in that adds 3 more builtin types
 //   doesnt stop you from needing finalizers, dupValue, thinking about moves
@@ -58,6 +59,7 @@ const ArrayList = std.ArrayList;
 // intern slices
 // print contents of return stack
 // get rid of sentinel type
+// access records from within zig easily
 
 // TODO want
 // prevent invalid symbols
@@ -74,11 +76,9 @@ const ArrayList = std.ArrayList;
 //     would make the logic easier
 //   multiline comments?
 //     could use ( )
-// records 100% in orth
-//   weak ptrs for cyclic "record-type" record
-//   auto generate doc strings
 // u64 type ?
 // dlsym ffi would be cool
+// look into factor's 'fried slices' to see if that would work for macros
 
 //;
 
@@ -542,13 +542,6 @@ pub const ValueType = @TagType(Value);
 
 //;
 
-pub const RecordType = struct {
-    // TODO keep slot names
-    slot_ct: usize,
-    // display_fn: Value,
-    // equivalent_fn: Value,
-};
-
 pub const FFI_Type = struct {
     display_fn: fn (*Thread, FFI_Ptr) void = defaultDisplay,
     equivalent_fn: fn (*Thread, FFI_Ptr, Value) bool = defaultEquivalent,
@@ -575,10 +568,10 @@ pub const FFI_Type = struct {
     fn defaultDrop(t: *VM, ptr: FFI_Ptr) void {}
 };
 
+// TODO do you need this anymore?
 pub const OrthType = struct {
     pub const Type = union(enum) {
         Primitive,
-        Record: RecordType,
         FFI: FFI_Type,
     };
 
@@ -864,6 +857,9 @@ pub const Thread = struct {
     pub fn deinit(self: *Self) void {
         for (self.restore_stack.data.items) |val| {
             self.vm.dropValue(val);
+        }
+        for (self.return_stack.data.items) |rv| {
+            self.vm.dropValue(rv.value);
         }
         for (self.stack.data.items) |val| {
             self.vm.dropValue(val);

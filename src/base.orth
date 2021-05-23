@@ -7,6 +7,8 @@
 ;   return stack accessors
 ;   over can be written like { dup } dip swap
 ;     pick can probably be done like this too
+;   cleave
+;   fold! is well defined like each!
 
 { over value-type-of :slice eq? def } :@ #t def
 { #f def } :@value @
@@ -41,6 +43,7 @@
   ; if }
 ; } :eval,restore @
 
+{ ; TODO
 { dup value-type-of :ffi-ptr eq?
   { dup ffi-type-of :record eq?
     { dup record-type-of :callable eq?
@@ -52,6 +55,9 @@
   { eval' }
   ? eval'
 } :eval @
+} drop
+
+{ eval' } :eval @
 
 { ref unwrap eval
 } :exec
@@ -259,6 +265,9 @@
     { ffi-type-of }
     if
     }
+  ; TODO
+  drop
+  { ffi-type-of }
   { value-type-of }
   if
 } :type-of @
@@ -357,6 +366,10 @@
 { mget* drop
 } :mget @
 
+; TODO write in zig
+{ <string>,clone string-append!
+} :string-append @
+
 ; =====
 
 #sentinel :[ @
@@ -374,7 +387,164 @@
 
 { <map> ]map'
 } :]map
-" ( #sentinel ... k1 v1 k2 v2 -- map ) "
+"( #sentinel ... k1 v1 k2 v2 -- map )"
+@doc
+
+; slices ===
+
+{ 2dup { slen } dip <=
+  { 3drop #f #f }
+  { 3dup swap sget eq?
+    { 2nip #t }
+    { 1 + index-of,eq' }
+    if }
+  if
+} :index-of,eq'
+; ( test slice n -- )
+@
+
+{ 0 index-of,eq'
+} :index-of,eq @
+
+; records ===
+
+; TODO
+;   autogenerate docstrings
+;   lots of cleanup
+;   display
+;   eqv?
+
+{ 0 swap rget
+} :record-type-type @
+
+{ 1 swap rget
+} :record-type-name @
+
+{ 2 swap rget
+} :record-type-field-tags @
+
+3 <record>
+{ { rdowngrade } keep 0 swap rset! } keep
+{ :record-type swap 1 swap rset! } keep
+{ { :name :field-tags } swap 2 swap rset! } keep
+:%record-type @
+
+{ 3 <record>
+  { { %record-type swap 0 swap rset! }
+    { 1 swap rset! }
+    { 2 swap rset! }
+    tri } keep
+} :<record-type> @
+
+{ 0 swap rget
+} :record-type-of @
+
+{ record-type-of record-type-field-tags slen
+} :record-field-ct @
+
+{ record-type-of record-type-field-tags index-of,eq
+} :record-field-index @
+
+{ 2dup { record-field-ct } dip <=
+  { drop }
+  { { over record-field-ct swap - swap rset! } 2keep
+    1 + construct' }
+  if
+} :construct'
+; ( record n -- )
+@
+
+{ dup record-type-field-tags slen 1 + <record>
+  { 0 swap rset! } keep
+  0 construct'
+} :construct @
+
+{ record-type-of eq?
+} :check-type @
+
+{ { record-field-index unwrap 1 + } keep rset!
+} :set-field! @
+
+; def-record macros
+
+{ dup symbol>string "%" string-append string>symbol { <record-type> } dip @
+} :def-record'type @
+
+{ nip
+  :construct symbol>word swap
+  symbol>string
+  { "%" string-append string>symbol symbol>word }
+  { "make-" string-append string>symbol }
+  bi
+  ; \construct \%cell :make-cell
+  { <vec>
+    { vpush! } keep
+    { vpush! } keep
+    vec>slice } dip
+  @
+} :def-record'constructor @
+
+{ nip
+  :eq? symbol>word swap
+  symbol>string
+  { "%" string-append string>symbol symbol>word }
+  { "?" swap string-append string>symbol }
+  bi
+  :record-type-of symbol>word swap
+  ; \eq? \%cell \record-type-of :cell?
+  { <vec>
+    { vpush! } keep
+    { vpush! } keep
+    { vpush! } keep
+    vec>slice } dip
+  @
+} :def-record'predicate @
+
+{ 2dup swap slen >=
+  { 3drop }
+  { 3dup
+    { swap sget symbol>string swap string-append } keep
+    1 +
+    ; ... "type-field-name" n
+    2dup
+    ; getter
+    { string>symbol :rget symbol>word :swap symbol>word } dip
+    <vec>
+    { vpush! } keep
+    { vpush! } keep
+    { vpush! } keep
+    vec>slice
+    swap
+    @
+    ; setter
+    { "!" swap string-append string>symbol
+      :rset! symbol>word :swap symbol>word } dip
+    <vec>
+    { vpush! } keep
+    { vpush! } keep
+    { vpush! } keep
+    vec>slice
+    swap
+    @
+    1 +
+    def-record'accessors'
+  }
+  if
+} :def-record'accessors'
+; ( name-str field-names n -- )
+@
+
+{ symbol>string "-" swap string-append! swap 0 def-record'accessors'
+} :def-record'accessors
+; ( field-names symbol -- )
+@
+
+{ { def-record'type } 2keep
+  { def-record'constructor } 2keep
+  { def-record'predicate } 2keep
+  def-record'accessors
+} :@record
+"( field-names symbol -- )"
 @doc
 
 ; iterators =====
@@ -444,10 +614,11 @@
 ;
 
 { over should-continue?
-  { over next!
-    { over eval }
-    { drop }
-    if
+  { { swap next!
+      { swap eval }
+      { drop }
+      if
+    } 2keep
     each! }
   { 2drop }
   if
@@ -576,4 +747,5 @@
 
 :in <file>,std unwrap :stdin @
 :out <file>,std unwrap :stdout @
-:err <file>,std unwrap :stderr @
+; TODO
+; :err <file>,std unwrap :stderr @

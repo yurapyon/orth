@@ -1,36 +1,38 @@
-{ 1 swap count
-  { drop #f } map
-  vcollect!
-} :<record>' @
+; { :char :lock } :cell <record-type> :%cell @
 
-{ 0 swap vget
-} :record-type-type @
+; :chch :lolo %cell construct :c @
 
-{ 1 swap vget
-} :record-type-name @
+; #t :char c set-field!
+; c
+; .stack'
 
-{ 2 swap vget
-} :record-type-field-tags @
+{ :blah :wa } :name @record
+5 6 make-name
+{ name-blah } keep
+{ :hello swap name-blah! } keep
+{ name-blah } keep
+.stack'
 
-3 <record>'
-{ #f swap 0 swap vset! } keep
-{ :record-type swap 1 swap vset! } keep
-{ { :name :field-tags } swap 2 swap vset! } keep
-:%record-type @
+%iterator .stack'
 
-{ 3 <record>'
-  { { %record-type swap 0 swap vset! }
-    { 1 swap vset! }
-    { 2 swap vset! }
-    tri } keep
-} :<record-type> @
+3 always
+{ next! } keep
+{ next! } keep
+{ next! } keep
+{ next! } keep
+.stack'
 
-{ :char :lock } :cell <record-type> :%cell @
+{
 
-%cell
-.stack
+{ :a :b :c } :slc @value
 
+:a slc index-of,eq
+:b slc index-of,eq
+:d slc index-of,eq
 
+.stack'
+
+{
 
 
 {
@@ -55,3 +57,6 @@ one
 "asdf" :a v mset!
 v
 .stack
+} drop
+
+} drop
