@@ -1,6 +1,6 @@
-%record-type
-.stack'
-
+"rw" "file" <file>,open unwrap .stack'
+{ "hello" swap file-write-all } keep
+file-read-all .stack'
 
 {
 

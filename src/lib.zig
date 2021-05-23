@@ -78,7 +78,7 @@ const ArrayList = std.ArrayList;
 //     could use ( )
 // u64 type ?
 // dlsym ffi would be cool
-// look into factor's 'fried slices' to see if that would work for macros
+// look into factor's 'fried quotations' to see if that would work for macros
 
 //;
 
@@ -543,7 +543,7 @@ pub const ValueType = @TagType(Value);
 
 //;
 
-pub const Rc_ = struct {
+pub const Rc = struct {
     const Self = @This();
 
     pub const Ptr = opaque {};
@@ -577,16 +577,16 @@ pub const Rc_ = struct {
         return self.ref_ct != 0;
     }
 
-    //     pub fn cast(self: Self, comptime T: type) *T {
-    //         return @ptrCast(*T, @alignCast(@alignOf(T), self.ptr));
-    //     }
+    pub fn cast(self: Self, comptime T: type) *T {
+        return @ptrCast(*T, @alignCast(@alignOf(T), self.ptr));
+    }
 };
 
 pub const Rc_Ptr = struct {
     const Self = @This();
 
     type_id: usize,
-    rc: *Rc_,
+    rc: *Rc,
     is_weak: bool,
 
     //     pub fn upgrade(self: *Self) void {
@@ -601,9 +601,9 @@ pub const Rc_Ptr = struct {
     //         return self.rc.dec();
     //     }
 
-    pub fn cast(self: Self, comptime T: type) *T {
-        return @ptrCast(*T, @alignCast(@alignOf(T), self.rc.ptr));
-    }
+    //     pub fn cast(self: Self, comptime T: type) *T {
+    //         return self.rc.cast(T);
+    //     }
 };
 
 pub const Rc_Type = struct {

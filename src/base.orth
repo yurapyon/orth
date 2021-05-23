@@ -745,7 +745,7 @@
 
 ; =====
 
-:in <file>,std unwrap :stdin @
-:out <file>,std unwrap :stdout @
+; :in <file>,std unwrap :stdin @
+; :out <file>,std unwrap :stdout @
 ; TODO
 ; :err <file>,std unwrap :stderr @

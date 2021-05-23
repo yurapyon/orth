@@ -263,6 +263,13 @@ pub fn f_value_type_of(t: *Thread) Thread.Error!void {
     t.vm.dropValue(val);
 }
 
+pub fn f_rc_type_of(t: *Thread) Thread.Error!void {
+    const val = try t.stack.pop();
+    if (val != .Rc_Ptr) return error.TypeError;
+    try t.stack.push(.{ .Symbol = t.vm.type_table.items[val.Rc_Ptr.type_id].name_id });
+    t.vm.dropValue(val);
+}
+
 pub fn f_ffi_type_of(t: *Thread) Thread.Error!void {
     const val = try t.stack.pop();
     if (val != .FFI_Ptr) return error.TypeError;
@@ -676,119 +683,14 @@ pub fn f_slice_get(t: *Thread) Thread.Error!void {
     try t.stack.push(t.vm.dupValue(slc.Slice[@intCast(usize, idx.Int)]));
 }
 
-// Rc ===
-// pub fn Rc2(comptime T: type) type {
-//     return struct {
-//         const Self = @This();
-//
-//         pub const Ref = struct {
-//             rc: *Self,
-//
-//             pub fn downgrade(ref: Ref) Weak {
-//                 ref.rc.ref_ct -= 1;
-//                 ref.rc.weak_ct += 1;
-//                 return .{ .rc = ref.rc };
-//             }
-//         };
-//
-//         pub const Weak = struct {
-//             rc: *Self,
-//
-//             pub fn upgrade(weak: Weak) Ref {
-//                 weak.rc.weak_ct -= 1;
-//                 weak.rc.ref_ct += 1;
-//                 return .{ .rc = weak.rc };
-//             }
-//         };
-//
-//         obj: T,
-//         ref_ct: usize,
-//         weak_ct: usize,
-//
-//         pub fn init() Self {
-//             return .{
-//                 .obj = undefined,
-//                 .ref_ct = 0,
-//             };
-//         }
-//
-//         pub fn makeOne(allocator: *Allocator) Allocator.Error!*Self {
-//             var rc = try allocator.create(Rc(T));
-//             rc.* = Rc(T).init();
-//             rc.inc();
-//             return rc;
-//         }
-//
-//         pub fn ref(self: *Self) Ref {
-//             self.ref_ct += 1;
-//             return .{ .rc = self };
-//         }
-//
-//         pub fn refWeak(self: *Self) Weak {
-//             self.weak_ct += 1;
-//             return .{ .rc = self };
-//         }
-//
-//         pub fn drop(self: *Self) bool {
-//         }
-//
-//         pub fn dropWeak(self: *Self) bool {
-//         }
-//
-//         //         pub fn inc(self: *Self) void {
-//         //             self.ref_ct += 1;
-//         //         }
-//         //
-//         //         // returns if the obj is alive or not
-//         //         pub fn dec(self: *Self) bool {
-//         //             std.debug.assert(self.ref_ct > 0);
-//         //             self.ref_ct -= 1;
-//         //             return self.ref_ct != 0;
-//         //         }
-//     };
-// }
-//
-pub fn Rc(comptime T: type) type {
-    return struct {
-        const Self = @This();
-
-        obj: T,
-        ref_ct: usize,
-
-        pub fn init() Self {
-            return .{
-                .obj = undefined,
-                .ref_ct = 0,
-            };
-        }
-
-        pub fn makeOne(allocator: *Allocator) Allocator.Error!*Self {
-            var rc = try allocator.create(Rc(T));
-            rc.* = Rc(T).init();
-            rc.inc();
-            return rc;
-        }
-
-        pub fn inc(self: *Self) void {
-            self.ref_ct += 1;
-        }
-
-        // returns if the obj is alive or not
-        pub fn dec(self: *Self) bool {
-            std.debug.assert(self.ref_ct > 0);
-            self.ref_ct -= 1;
-            return self.ref_ct != 0;
-        }
-    };
-}
-
-// rc_test ==
+// rc ===
 
 pub fn f_downgrade(t: *Thread) Thread.Error!void {
     const this = try t.stack.index(0);
     if (this.* != .Rc_Ptr) return error.TypeError;
     var ptr = &this.*.Rc_Ptr;
     const ref_ct = ptr.rc.ref_ct;
+    // TODO maybe it should be an error if you downgrade and the obj is freed
     t.vm.dropValue(this.*);
     if (ref_ct > 1) {
         ptr.is_weak = true;
@@ -802,248 +704,6 @@ pub fn f_upgrade(t: *Thread) Thread.Error!void {
     ptr.is_weak = false;
     ptr.rc.inc();
 }
-
-// pub const ft_int = struct {
-//     const Self = @This();
-//
-//     pub const Int = u8;
-//
-//     var type_id: usize = undefined;
-//
-//     pub fn install(vm: *VM) Allocator.Error!void {
-//         type_id = try vm.installType("box-int", .{
-//             .ty = .{
-//                 .Rc = .{
-//                     .display_fn = display,
-//                     .finalize_fn = finalize,
-//                 },
-//             },
-//         });
-//     }
-//
-//     pub fn display(t: *Thread, ptr: Rc_Ptr) void {
-//         const i = ptr.cast(Int);
-//         std.debug.print("box({} {})", .{ i, i.* });
-//     }
-//
-//     pub fn finalize(vm: *VM, ptr: Rc_Ptr) void {
-//         var i = ptr.cast(Int);
-//         vm.allocator.destroy(i);
-//     }
-//
-//     //;
-//
-//     pub fn _make(t: *Thread) Thread.Error!void {
-//         var i = try t.vm.allocator.create(u8);
-//         i.* = 3;
-//         try t.stack.push(.{
-//             .Rc_Ptr = .{
-//                 .type_id = type_id,
-//                 .rc = try Rc_.makeOne(t.vm.allocator, i),
-//                 .is_weak = false,
-//             },
-//         });
-//     }
-// };
-
-// string ===
-
-// TODO separate out code that takes a literal string
-pub const ft_string = struct {
-    const Self = @This();
-
-    pub const String = ArrayList(u8);
-
-    var type_id: usize = undefined;
-
-    pub fn install(vm: *VM) Allocator.Error!void {
-        type_id = try vm.installType("string", .{
-            .ty = .{
-                .FFI = .{
-                    .display_fn = display,
-                    .dup_fn = dup,
-                    .drop_fn = drop,
-                },
-            },
-        });
-    }
-
-    pub fn display(t: *Thread, ptr: FFI_Ptr) void {
-        const rc = ptr.cast(Rc(String));
-        std.debug.print("\"{}\"", .{rc.obj.items});
-    }
-
-    pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
-        var rc = ptr.cast(Rc(String));
-        rc.inc();
-        return .{
-            .type_id = type_id,
-            .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-        };
-    }
-
-    pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
-        var rc = ptr.cast(Rc(String));
-        if (!rc.dec()) {
-            rc.obj.deinit();
-            vm.allocator.destroy(rc);
-        }
-    }
-
-    //;
-
-    fn makeRcFromSlice(allocator: *Allocator, slice: []const u8) Allocator.Error!*Rc(String) {
-        var rc = try Rc(String).makeOne(allocator);
-        rc.obj = String.init(allocator);
-        try rc.obj.appendSlice(slice);
-        return rc;
-    }
-
-    fn makeRcMoveSlice(allocator: *Allocator, slice: []u8) Allocator.Error!*Rc(String) {
-        var rc = try Rc(String).makeOne(allocator);
-        rc.obj = String.fromOwnedSlice(allocator, slice);
-        return rc;
-    }
-
-    pub fn _make(t: *Thread) Thread.Error!void {
-        var rc = try Rc(String).makeOne(t.vm.allocator);
-        rc.obj = String.init(t.vm.allocator);
-        try t.stack.push(.{
-            .FFI_Ptr = .{
-                .type_id = type_id,
-                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-            },
-        });
-    }
-
-    pub fn _clone(t: *Thread) Thread.Error!void {
-        const other = try t.stack.pop();
-        switch (other) {
-            .String => |str| {
-                var rc = try makeRcFromSlice(t.vm.allocator, str);
-                try t.stack.push(.{
-                    .FFI_Ptr = .{
-                        .type_id = type_id,
-                        .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-                    },
-                });
-            },
-            .FFI_Ptr => |ptr| {
-                if (ptr.type_id != type_id) return error.TypeError;
-
-                var other_rc = ptr.cast(Rc(String));
-                var rc = try makeRcFromSlice(t.vm.allocator, other_rc.obj.items);
-
-                try t.stack.push(.{
-                    .FFI_Ptr = .{
-                        .type_id = type_id,
-                        .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-                    },
-                });
-
-                t.vm.dropValue(other);
-            },
-            else => return error.TypeError,
-        }
-    }
-
-    // TODO should u switch this and other here
-    // "abc" "def" string-append!
-    // "def" "abc" string-append!
-    // { swap string-append! } :++ @
-    pub fn _append_in_place(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        const other = try t.stack.pop();
-        switch (other) {
-            .String => {},
-            .FFI_Ptr => |ptr| {
-                if (ptr.type_id != type_id) return error.TypeError;
-            },
-            else => return error.TypeError,
-        }
-
-        const rc = switch (this) {
-            .String => |str| try makeRcFromSlice(t.vm.allocator, str),
-            .FFI_Ptr => |ptr| blk: {
-                if (ptr.type_id != type_id) return error.TypeError;
-                break :blk ptr.cast(Rc(String));
-            },
-            else => return error.TypeError,
-        };
-
-        switch (other) {
-            .String => |o_str| try rc.obj.appendSlice(o_str),
-            .FFI_Ptr => |o_ptr| {
-                const o_str = o_ptr.cast(Rc(String)).obj.items;
-                try rc.obj.appendSlice(o_str);
-            },
-            else => unreachable,
-        }
-
-        try t.stack.push(.{
-            .FFI_Ptr = .{
-                .type_id = type_id,
-                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-            },
-        });
-
-        t.vm.dropValue(other);
-    }
-
-    pub fn _to_symbol(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        const str = switch (this) {
-            .String => |str| str,
-            .FFI_Ptr => |ptr| blk: {
-                if (ptr.type_id != type_id) return error.TypeError;
-                break :blk ptr.cast(Rc(String)).obj.items;
-            },
-            else => return error.TypeError,
-        };
-        try t.stack.push(.{ .Symbol = try t.vm.internSymbol(str) });
-        t.vm.dropValue(this);
-    }
-
-    pub fn _get(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        const idx = try t.stack.pop();
-        if (this != .FFI_Ptr and this != .String) return error.TypeError;
-        if (this == .FFI_Ptr and this.FFI_Ptr.type_id != type_id) return error.TypeError;
-        if (idx != .Int) return error.TypeError;
-
-        switch (this) {
-            .String => |s| {
-                try t.stack.push(.{ .Char = s[@intCast(usize, idx.Int)] });
-            },
-            .FFI_Ptr => |ptr| {
-                var rc = ptr.cast(Rc(String));
-                try t.stack.push(.{ .Char = rc.obj.items[@intCast(usize, idx.Int)] });
-            },
-            else => unreachable,
-        }
-
-        t.vm.dropValue(this);
-    }
-
-    pub fn _len(t: *Thread) Thread.Error!void {
-        const this = try t.stack.pop();
-        if (this != .FFI_Ptr or this != .String) return error.TypeError;
-        if (this == .FFI_Ptr and this.FFI_Ptr.type_id != type_id) return error.TypeError;
-
-        switch (this) {
-            .String => |s| {
-                try t.stack.push(.{ .Int = @intCast(i32, s.len) });
-            },
-            .FFI_Ptr => |ptr| {
-                var rc = ptr.cast(Rc(String));
-                try t.stack.push(.{ .Int = @intCast(i32, rc.obj.items.len) });
-            },
-            else => unreachable,
-        }
-
-        t.vm.dropValue(this);
-    }
-};
 
 // record ===
 
@@ -1067,7 +727,7 @@ pub const ft_record = struct {
     }
 
     pub fn display(t: *Thread, ptr: Rc_Ptr) void {
-        const rec = ptr.cast(Record);
+        const rec = ptr.rc.cast(Record);
         std.debug.print("r< ", .{});
         for (rec.*) |v| {
             t.nicePrintValue(v);
@@ -1077,12 +737,12 @@ pub const ft_record = struct {
     }
 
     pub fn display_weak(t: *Thread, ptr: Rc_Ptr) void {
-        const rec = ptr.cast(Record);
+        const rec = ptr.rc.cast(Record);
         std.debug.print("r@({x} {})", .{ @ptrToInt(rec), rec.len });
     }
 
     pub fn finalize(vm: *VM, ptr: Rc_Ptr) void {
-        var rec = ptr.cast(Record);
+        var rec = ptr.rc.cast(Record);
         for (rec.*) |val| {
             vm.dropValue(val);
         }
@@ -1103,7 +763,7 @@ pub const ft_record = struct {
         }
         rec.* = data;
 
-        var rc = try Rc_.makeOne(t.vm.allocator, rec);
+        var rc = try Rc.makeOne(t.vm.allocator, rec);
         try t.stack.push(.{
             .Rc_Ptr = .{
                 .type_id = type_id,
@@ -1121,7 +781,7 @@ pub const ft_record = struct {
         if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
         if (idx != .Int) return error.TypeError;
 
-        var rec = this.Rc_Ptr.cast(Record);
+        var rec = this.Rc_Ptr.rc.cast(Record);
         rec.*[@intCast(usize, idx.Int)] = val;
 
         t.vm.dropValue(this);
@@ -1134,7 +794,7 @@ pub const ft_record = struct {
         if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
         if (idx != .Int) return error.TypeError;
 
-        var rec = this.Rc_Ptr.cast(Record);
+        var rec = this.Rc_Ptr.rc.cast(Record);
         try t.stack.push(t.vm.dupValue(rec.*[@intCast(usize, idx.Int)]));
 
         t.vm.dropValue(this);
@@ -1151,71 +811,54 @@ pub const ft_vec = struct {
     pub const Vec = ArrayList(Value);
 
     var type_id: usize = undefined;
-    var weak_type_id: usize = undefined;
 
     pub fn install(vm: *VM) Allocator.Error!void {
         type_id = try vm.installType("vec", .{
             .ty = .{
-                .FFI = .{
+                .Rc = .{
                     .display_fn = display,
-                    .dup_fn = dup,
-                    .drop_fn = drop,
-                },
-            },
-        });
-        weak_type_id = try vm.installType("weak-vec", .{
-            .ty = .{
-                .FFI = .{
-                    .display_fn = display_weak,
+                    .display_weak_fn = display_weak,
+                    .finalize_fn = finalize,
                 },
             },
         });
     }
 
-    pub fn display(t: *Thread, ptr: FFI_Ptr) void {
-        const rc = ptr.cast(Rc(Vec));
+    pub fn display(t: *Thread, ptr: Rc_Ptr) void {
+        const vec = ptr.rc.cast(Vec);
         std.debug.print("v[ ", .{});
-        for (rc.obj.items) |v| {
+        for (vec.items) |v| {
             t.nicePrintValue(v);
             std.debug.print(" ", .{});
         }
         std.debug.print("]", .{});
     }
 
-    pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
-        var rc = ptr.cast(Rc(Vec));
-        rc.inc();
-        return .{
-            .type_id = type_id,
-            .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-        };
+    pub fn display_weak(t: *Thread, ptr: Rc_Ptr) void {
+        const vec = ptr.rc.cast(Vec);
+        std.debug.print("v@({x} {})", .{ @ptrToInt(vec), vec.items.len });
     }
 
-    pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
-        var rc = ptr.cast(Rc(Vec));
-        if (!rc.dec()) {
-            for (rc.obj.items) |val| {
-                vm.dropValue(val);
-            }
-            rc.obj.deinit();
-            vm.allocator.destroy(rc);
+    pub fn finalize(vm: *VM, ptr: Rc_Ptr) void {
+        var vec = ptr.rc.cast(Vec);
+        for (vec.items) |val| {
+            vm.dropValue(val);
         }
-    }
-
-    pub fn display_weak(t: *Thread, ptr: FFI_Ptr) void {
-        const rc = ptr.cast(Rc(Vec));
-        std.debug.print("v@({x} {})", .{ @ptrToInt(rc), rc.obj.items.len });
+        vec.deinit();
+        vm.allocator.destroy(vec);
     }
 
     //;
 
     pub fn _make(t: *Thread) Thread.Error!void {
-        var rc = try Rc(Vec).makeOne(t.vm.allocator);
-        rc.obj = Vec.init(t.vm.allocator);
+        var vec = try t.vm.allocator.create(Vec);
+        vec.* = Vec.init(t.vm.allocator);
+        var rc = try Rc.makeOne(t.vm.allocator, vec);
         try t.stack.push(.{
-            .FFI_Ptr = .{
+            .Rc_Ptr = .{
                 .type_id = type_id,
-                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+                .rc = rc,
+                .is_weak = false,
             },
         });
     }
@@ -1224,63 +867,42 @@ pub const ft_vec = struct {
         const capacity = try t.stack.pop();
         if (capacity != .Int) return error.TypeError;
 
-        var rc = try Rc(Vec).makeOne(t.vm.allocator);
-        rc.obj = try Vec.initCapacity(
+        var vec = try t.vm.allocator.create(Vec);
+        vec.* = try Vec.initCapacity(
             t.vm.allocator,
             @intCast(usize, capacity.Int),
         );
-
+        var rc = try Rc.makeOne(t.vm.allocator, vec);
         try t.stack.push(.{
-            .FFI_Ptr = .{
+            .Rc_Ptr = .{
                 .type_id = type_id,
-                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+                .rc = rc,
+                .is_weak = false,
             },
         });
     }
 
-    pub fn _downgrade(t: *Thread) Thread.Error!void {
-        const this = try t.stack.index(0);
-        if (this.* != .FFI_Ptr) return error.TypeError;
-        if (this.*.FFI_Ptr.type_id != type_id) return error.TypeError;
-        const rc = this.FFI_Ptr.cast(Rc(Vec));
-        const ref_ct = rc.ref_ct;
-        t.vm.dropValue(this.*);
-        if (ref_ct > 1) {
-            this.*.FFI_Ptr.type_id = weak_type_id;
-        }
-    }
-
-    pub fn _upgrade(t: *Thread) Thread.Error!void {
-        const this = try t.stack.index(0);
-        if (this.* != .FFI_Ptr) return error.TypeError;
-        if (this.*.FFI_Ptr.type_id != weak_type_id) return error.TypeError;
-        this.*.FFI_Ptr.type_id = type_id;
-        var rc = this.*.FFI_Ptr.cast(Rc(Vec));
-        rc.inc();
-    }
-
     pub fn _to_slice(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id and
-            this.FFI_Ptr.type_id != weak_type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(Vec));
-        const slc = try t.vm.allocator.dupe(Value, rc.obj.items);
+        var vec = this.Rc_Ptr.rc.cast(Vec);
+        const slc = try t.vm.allocator.dupe(Value, vec.items);
         try t.vm.slice_literals.append(.{ .Slice = slc });
         try t.stack.push(.{ .Slice = slc });
+
         t.vm.dropValue(this);
     }
 
     pub fn _push(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const val = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id and
-            this.FFI_Ptr.type_id != weak_type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(Vec));
-        try rc.obj.append(val);
+        var vec = this.Rc_Ptr.rc.cast(Vec);
+        try vec.append(val);
 
         t.vm.dropValue(this);
     }
@@ -1289,14 +911,13 @@ pub const ft_vec = struct {
         const this = try t.stack.pop();
         const idx = try t.stack.pop();
         const val = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id and
-            this.FFI_Ptr.type_id != weak_type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
         if (idx != .Int) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(Vec));
-        t.vm.dropValue(rc.obj.items[@intCast(usize, idx.Int)]);
-        rc.obj.items[@intCast(usize, idx.Int)] = val;
+        var vec = this.Rc_Ptr.rc.cast(Vec);
+        t.vm.dropValue(vec.items[@intCast(usize, idx.Int)]);
+        vec.items[@intCast(usize, idx.Int)] = val;
 
         t.vm.dropValue(this);
     }
@@ -1304,37 +925,337 @@ pub const ft_vec = struct {
     pub fn _get(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const idx = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id and
-            this.FFI_Ptr.type_id != weak_type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
         if (idx != .Int) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(Vec));
-        try t.stack.push(t.vm.dupValue(rc.obj.items[@intCast(usize, idx.Int)]));
+        var vec = this.Rc_Ptr.rc.cast(Vec);
+        try t.stack.push(t.vm.dupValue(vec.items[@intCast(usize, idx.Int)]));
 
         t.vm.dropValue(this);
     }
 
     pub fn _len(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id and
-            this.FFI_Ptr.type_id != weak_type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(Vec));
-        try t.stack.push(.{ .Int = @intCast(i32, rc.obj.items.len) });
+        var vec = this.Rc_Ptr.rc.cast(Vec);
+        try t.stack.push(.{ .Int = @intCast(i32, vec.items.len) });
 
         t.vm.dropValue(this);
     }
 
     pub fn _reverse_in_place(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id and
-            this.FFI_Ptr.type_id != weak_type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(Vec));
-        std.mem.reverse(Value, rc.obj.items);
+        var vec = this.Rc_Ptr.rc.cast(Vec);
+        std.mem.reverse(Value, vec.items);
+
+        t.vm.dropValue(this);
+    }
+};
+
+// string ===
+
+// TODO separate out code that takes a literal string
+pub const ft_string = struct {
+    const Self = @This();
+
+    pub const String = ArrayList(u8);
+
+    var type_id: usize = undefined;
+
+    pub fn install(vm: *VM) Allocator.Error!void {
+        type_id = try vm.installType("string", .{
+            .ty = .{
+                .Rc = .{
+                    .display_fn = display,
+                    .display_weak_fn = display_weak,
+                    .finalize_fn = finalize,
+                },
+            },
+        });
+    }
+
+    pub fn display(t: *Thread, ptr: Rc_Ptr) void {
+        const string = ptr.rc.cast(String);
+        std.debug.print("\"{}\"", .{string.items});
+    }
+
+    pub fn display_weak(t: *Thread, ptr: Rc_Ptr) void {
+        const string = ptr.rc.cast(String);
+        std.debug.print("\"{}\"W", .{string.items});
+    }
+
+    pub fn finalize(vm: *VM, ptr: Rc_Ptr) void {
+        var string = ptr.rc.cast(String);
+        string.deinit();
+    }
+
+    //;
+
+    fn makeRcFromSlice(allocator: *Allocator, slice: []const u8) Allocator.Error!*Rc {
+        var string = try allocator.create(String);
+        string.* = String.init(allocator);
+        try string.appendSlice(slice);
+        var rc = try Rc.makeOne(allocator, string);
+        return rc;
+    }
+
+    fn makeRcMoveSlice(allocator: *Allocator, slice: []u8) Allocator.Error!*Rc {
+        var string = try allocator.create(String);
+        string.* = String.fromOwnedSlice(allocator, slice);
+        var rc = try Rc.makeOne(allocator, string);
+        return rc;
+    }
+
+    pub fn _make(t: *Thread) Thread.Error!void {
+        var string = try t.vm.allocator.create(String);
+        string.* = String.init(t.vm.allocator);
+        var rc = try Rc.makeOne(t.vm.allocator, string);
+        try t.stack.push(.{
+            .Rc_Ptr = .{
+                .type_id = type_id,
+                .rc = rc,
+                .is_weak = false,
+            },
+        });
+    }
+
+    pub fn _clone(t: *Thread) Thread.Error!void {
+        const other = try t.stack.pop();
+        switch (other) {
+            .String => |str| {
+                var rc = try makeRcFromSlice(t.vm.allocator, str);
+                try t.stack.push(.{
+                    .Rc_Ptr = .{
+                        .type_id = type_id,
+                        .rc = rc,
+                        .is_weak = false,
+                    },
+                });
+            },
+            .Rc_Ptr => |ptr| {
+                if (ptr.type_id != type_id) return error.TypeError;
+
+                var other_str = ptr.rc.cast(String);
+                var rc = try makeRcFromSlice(t.vm.allocator, other_str.items);
+
+                try t.stack.push(.{
+                    .Rc_Ptr = .{
+                        .type_id = type_id,
+                        .rc = rc,
+                        .is_weak = false,
+                    },
+                });
+
+                t.vm.dropValue(other);
+            },
+            else => return error.TypeError,
+        }
+    }
+
+    // TODO should u switch this and other here
+    // "abc" "def" string-append!
+    // "def" "abc" string-append!
+    // { swap string-append! } :++ @
+    pub fn _append_in_place(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        const other = try t.stack.pop();
+        switch (this) {
+            .String => {},
+            .Rc_Ptr => |ptr| if (ptr.type_id != type_id) return error.TypeError,
+            else => return error.TypeError,
+        }
+        switch (other) {
+            .String => {},
+            .Rc_Ptr => |ptr| if (ptr.type_id != type_id) return error.TypeError,
+            else => return error.TypeError,
+        }
+
+        const rc = switch (this) {
+            .String => |str| try makeRcFromSlice(t.vm.allocator, str),
+            .Rc_Ptr => |ptr| ptr.rc,
+            else => unreachable,
+        };
+
+        const o_str = switch (other) {
+            .String => |str| str,
+            .Rc_Ptr => |ptr| ptr.rc.cast(String).items,
+            else => unreachable,
+        };
+
+        try rc.cast(String).appendSlice(o_str);
+
+        try t.stack.push(.{
+            .Rc_Ptr = .{
+                .type_id = type_id,
+                .rc = rc,
+                .is_weak = false,
+            },
+        });
+
+        t.vm.dropValue(other);
+    }
+
+    pub fn _to_symbol(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        switch (this) {
+            .String => {},
+            .Rc_Ptr => |ptr| if (ptr.type_id != type_id) return error.TypeError,
+            else => return error.TypeError,
+        }
+
+        const str = switch (this) {
+            .String => |str| str,
+            .Rc_Ptr => |ptr| ptr.rc.cast(String).items,
+            else => unreachable,
+        };
+
+        try t.stack.push(.{ .Symbol = try t.vm.internSymbol(str) });
+
+        t.vm.dropValue(this);
+    }
+
+    pub fn _get(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        const idx = try t.stack.pop();
+        switch (this) {
+            .String => {},
+            .Rc_Ptr => |ptr| if (ptr.type_id != type_id) return error.TypeError,
+            else => return error.TypeError,
+        }
+        if (idx != .Int) return error.TypeError;
+
+        const str = switch (this) {
+            .String => |str| str,
+            .Rc_Ptr => |ptr| ptr.rc.cast(String).items,
+            else => unreachable,
+        };
+
+        try t.stack.push(.{ .Char = str[@intCast(usize, idx.Int)] });
+
+        t.vm.dropValue(this);
+    }
+
+    pub fn _len(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        switch (this) {
+            .String => {},
+            .Rc_Ptr => |ptr| if (ptr.type_id != type_id) return error.TypeError,
+            else => return error.TypeError,
+        }
+
+        const str = switch (this) {
+            .String => |str| str,
+            .Rc_Ptr => |ptr| ptr.rc.cast(String).items,
+            else => unreachable,
+        };
+
+        try t.stack.push(.{ .Int = @intCast(i32, str.len) });
+
+        t.vm.dropValue(this);
+    }
+};
+
+// map ===
+
+pub const ft_map = struct {
+    const Self = @This();
+
+    pub const Map = std.AutoHashMap(usize, Value);
+
+    pub var type_id: usize = undefined;
+
+    pub fn install(vm: *VM) Allocator.Error!void {
+        type_id = try vm.installType("map", .{
+            .ty = .{
+                .Rc = .{
+                    .display_fn = display,
+                    .display_weak_fn = display_weak,
+                    .finalize_fn = finalize,
+                },
+            },
+        });
+    }
+
+    pub fn display(t: *Thread, ptr: Rc_Ptr) void {
+        const map = ptr.rc.cast(Map);
+        std.debug.print("m[ ", .{});
+        var iter = map.iterator();
+        while (iter.next()) |entry| {
+            std.debug.print("{} ", .{t.vm.symbol_table.items[entry.key]});
+            t.nicePrintValue(entry.value);
+            std.debug.print(" ", .{});
+        }
+        std.debug.print("]", .{});
+    }
+
+    pub fn display_weak(t: *Thread, ptr: Rc_Ptr) void {
+        const map = ptr.rc.cast(Map);
+        std.debug.print("m@({x})", .{@ptrToInt(map)});
+    }
+
+    pub fn finalize(vm: *VM, ptr: Rc_Ptr) void {
+        var map = ptr.rc.cast(Map);
+        var iter = map.iterator();
+        while (iter.next()) |entry| {
+            vm.dropValue(entry.value);
+        }
+        map.deinit();
+        vm.allocator.destroy(map);
+    }
+
+    //;
+
+    pub fn _make(t: *Thread) Thread.Error!void {
+        var map = try t.vm.allocator.create(Map);
+        map.* = Map.init(t.vm.allocator);
+        var rc = try Rc.makeOne(t.vm.allocator, map);
+        try t.stack.push(.{
+            .Rc_Ptr = .{
+                .type_id = type_id,
+                .rc = rc,
+                .is_weak = false,
+            },
+        });
+    }
+
+    pub fn _set(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        const sym = try t.stack.pop();
+        const value = try t.stack.pop();
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
+        if (sym != .Symbol) return error.TypeError;
+
+        var map = this.Rc_Ptr.rc.cast(Map);
+
+        // TODO handle overwrite
+        try map.put(sym.Symbol, value);
+
+        t.vm.dropValue(this);
+    }
+
+    pub fn _get(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        const sym = try t.stack.pop();
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
+        if (sym != .Symbol) return error.TypeError;
+
+        var map = this.Rc_Ptr.rc.cast(Map);
+
+        if (map.get(sym.Symbol)) |val| {
+            try t.stack.push(t.vm.dupValue(val));
+            try t.stack.push(.{ .Boolean = true });
+        } else {
+            try t.stack.push(.{ .String = "not found" });
+            try t.stack.push(.{ .Boolean = false });
+        }
 
         t.vm.dropValue(this);
     }
@@ -1355,78 +1276,38 @@ pub const ft_file = struct {
     pub fn install(vm: *VM) Allocator.Error!void {
         type_id = try vm.installType("file", .{
             .ty = .{
-                .FFI = .{
+                .Rc = .{
                     .display_fn = display,
-                    .dup_fn = dup,
-                    .drop_fn = drop,
+                    .display_weak_fn = display_weak,
+                    .finalize_fn = finalize,
                 },
             },
         });
     }
 
-    pub fn display(t: *Thread, ptr: FFI_Ptr) void {
-        const rc = ptr.cast(Rc(File));
-        std.debug.print("f({})", .{rc.obj.filepath});
+    pub fn display(t: *Thread, ptr: Rc_Ptr) void {
+        const file = ptr.rc.cast(File);
+        std.debug.print("f({})", .{file.filepath});
     }
 
-    pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
-        var rc = ptr.cast(Rc(File));
-        rc.inc();
-        return .{
-            .type_id = type_id,
-            .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-        };
+    pub fn display_weak(t: *Thread, ptr: Rc_Ptr) void {
+        const file = ptr.rc.cast(File);
+        std.debug.print("f({})W", .{file.filepath});
     }
 
-    pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
-        var rc = ptr.cast(Rc(File));
-        if (!rc.dec()) {
-            vm.allocator.free(rc.obj.filepath);
-            rc.obj.file.close();
-            vm.allocator.destroy(rc);
-        }
+    pub fn finalize(vm: *VM, ptr: Rc_Ptr) void {
+        var file = ptr.rc.cast(File);
+        vm.allocator.free(file.filepath);
+        file.file.close();
+        vm.allocator.destroy(file);
     }
 
     //;
 
     // TODO
     //   file close
-
-    // TODO there could be an error if <file>,std is called more than once
-    //   and orth tries to close one of the files twice
-    pub fn _std(t: *Thread) Thread.Error!void {
-        const which = try t.stack.pop();
-        if (which != .Symbol) return error.TypeError;
-
-        var f: std.fs.File = undefined;
-        var fp: []const u8 = undefined;
-        if (which.Symbol == try t.vm.internSymbol("in")) {
-            f = std.io.getStdIn();
-            fp = "stdin";
-        } else if (which.Symbol == try t.vm.internSymbol("out")) {
-            f = std.io.getStdOut();
-            fp = "stdout";
-        } else if (which.Symbol == try t.vm.internSymbol("err")) {
-            f = std.io.getStdErr();
-            fp = "stderr";
-        } else {
-            // TODO
-            return error.Panic;
-        }
-
-        var rc = try Rc(File).makeOne(t.vm.allocator);
-        rc.obj = .{
-            .filepath = try t.vm.allocator.dupe(u8, fp),
-            .file = f,
-        };
-        try t.stack.push(.{
-            .FFI_Ptr = .{
-                .type_id = type_id,
-                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-            },
-        });
-        try t.stack.push(.{ .Boolean = true });
-    }
+    //   read until delimiter
+    //   write until delimiter
 
     pub fn _open(t: *Thread) Thread.Error!void {
         // TODO allow ffi string
@@ -1451,15 +1332,59 @@ pub const ft_file = struct {
         };
         errdefer f.close();
 
-        var rc = try Rc(File).makeOne(t.vm.allocator);
-        rc.obj = .{
+        var file = try t.vm.allocator.create(File);
+        file.* = .{
             .filepath = try t.vm.allocator.dupe(u8, path.String),
             .file = f,
         };
+
+        var rc = try Rc.makeOne(t.vm.allocator, file);
         try t.stack.push(.{
-            .FFI_Ptr = .{
+            .Rc_Ptr = .{
                 .type_id = type_id,
-                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
+                .rc = rc,
+                .is_weak = false,
+            },
+        });
+        try t.stack.push(.{ .Boolean = true });
+    }
+
+    // TODO there could be an error if <file>,std is called more than once
+    //   and orth tries to close one of the files twice
+    pub fn _std(t: *Thread) Thread.Error!void {
+        const which = try t.stack.pop();
+        if (which != .Symbol) return error.TypeError;
+
+        var fp: []const u8 = undefined;
+        var f: std.fs.File = undefined;
+        if (which.Symbol == try t.vm.internSymbol("in")) {
+            fp = "stdin";
+            f = std.io.getStdIn();
+        } else if (which.Symbol == try t.vm.internSymbol("out")) {
+            fp = "stdout";
+            f = std.io.getStdOut();
+        } else if (which.Symbol == try t.vm.internSymbol("err")) {
+            fp = "stderr";
+            f = std.io.getStdErr();
+        } else {
+            // TODO
+            try t.stack.push(.{ .Boolean = false });
+            try t.stack.push(.{ .Boolean = false });
+            return;
+        }
+
+        var file = try t.vm.allocator.create(File);
+        file.* = .{
+            .filepath = try t.vm.allocator.dupe(u8, fp),
+            .file = f,
+        };
+
+        var rc = try Rc.makeOne(t.vm.allocator, file);
+        try t.stack.push(.{
+            .Rc_Ptr = .{
+                .type_id = type_id,
+                .rc = rc,
+                .is_weak = false,
             },
         });
         try t.stack.push(.{ .Boolean = true });
@@ -1467,13 +1392,13 @@ pub const ft_file = struct {
 
     pub fn _read_char(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(File));
+        var file = this.Rc_Ptr.rc.cast(File);
         var buf = [1]u8{undefined};
         // TODO handle read errors
-        const ct = rc.obj.file.read(&buf) catch unreachable;
+        const ct = file.file.read(&buf) catch unreachable;
         if (ct == 0) {
             try t.stack.push(.{ .Boolean = false });
             try t.stack.push(.{ .Boolean = false });
@@ -1486,22 +1411,23 @@ pub const ft_file = struct {
 
     pub fn _read_all(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(File));
+        var file = this.Rc_Ptr.rc.cast(File);
         // TODO
-        rc.obj.file.seekTo(0) catch unreachable;
-        const buf = rc.obj.file.readToEndAlloc(t.vm.allocator, std.math.maxInt(usize)) catch |err| switch (err) {
+        file.file.seekTo(0) catch unreachable;
+        const buf = file.file.readToEndAlloc(t.vm.allocator, std.math.maxInt(usize)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => unreachable,
         };
 
         var rc_str = try ft_string.makeRcMoveSlice(t.vm.allocator, buf);
         try t.stack.push(.{
-            .FFI_Ptr = .{
+            .Rc_Ptr = .{
                 .type_id = ft_string.type_id,
-                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc_str),
+                .rc = rc_str,
+                .is_weak = false,
             },
         });
         try t.stack.push(.{ .Boolean = true });
@@ -1512,14 +1438,15 @@ pub const ft_file = struct {
     pub fn _write_char(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const ch = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
         if (ch != .Char) return error.TypeError;
 
         const buf = [1]u8{ch.Char};
 
-        var rc = this.FFI_Ptr.cast(Rc(File));
-        rc.obj.file.writeAll(&buf) catch unreachable;
+        var file = this.Rc_Ptr.rc.cast(File);
+        // TODO
+        file.file.writeAll(&buf) catch unreachable;
 
         t.vm.dropValue(this);
     }
@@ -1527,125 +1454,16 @@ pub const ft_file = struct {
     pub fn _write_all(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const str = try t.stack.pop();
-        if (this != .FFI_Ptr) return error.TypeError;
-        if (this.FFI_Ptr.type_id != type_id) return error.TypeError;
+        if (this != .Rc_Ptr) return error.TypeError;
+        if (this.Rc_Ptr.type_id != type_id) return error.TypeError;
         // TODO take ffi string
         if (str != .String) return error.TypeError;
 
-        var rc = this.FFI_Ptr.cast(Rc(File));
-        rc.obj.file.writeAll(str.String) catch unreachable;
+        var file = this.Rc_Ptr.rc.cast(File);
+        // TODO
+        file.file.writeAll(str.String) catch unreachable;
 
         t.vm.dropValue(this);
-    }
-};
-
-// map ===
-
-// TODO
-// mref vs mget ?   'mget eval' isnt bad or 'meval'
-//   where mget should evaluate whatever it gets out of the map
-//   and mref should just push it
-// equals
-pub const ft_map = struct {
-    const Self = @This();
-
-    pub const Map = std.AutoHashMap(usize, Value);
-
-    pub var type_id: usize = undefined;
-
-    pub fn install(vm: *VM) Allocator.Error!void {
-        type_id = try vm.installType("map", .{
-            .ty = .{
-                .FFI = .{
-                    .display_fn = display,
-                    .dup_fn = dup,
-                    .drop_fn = drop,
-                },
-            },
-        });
-    }
-
-    pub fn display(t: *Thread, ptr: FFI_Ptr) void {
-        const rc = ptr.cast(Rc(Map));
-        std.debug.print("m[ ", .{});
-        var iter = rc.obj.iterator();
-        while (iter.next()) |entry| {
-            std.debug.print("{} ", .{t.vm.symbol_table.items[entry.key]});
-            t.nicePrintValue(entry.value);
-            std.debug.print(" ", .{});
-        }
-        std.debug.print("]", .{});
-    }
-
-    pub fn dup(vm: *VM, ptr: FFI_Ptr) FFI_Ptr {
-        var rc = ptr.cast(Rc(Map));
-        rc.inc();
-        return .{
-            .type_id = type_id,
-            .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-        };
-    }
-
-    pub fn drop(vm: *VM, ptr: FFI_Ptr) void {
-        var rc = ptr.cast(Rc(Map));
-        if (!rc.dec()) {
-            var iter = rc.obj.iterator();
-            while (iter.next()) |entry| {
-                vm.dropValue(entry.value);
-            }
-            rc.obj.deinit();
-            vm.allocator.destroy(rc);
-        }
-    }
-
-    //;
-
-    pub fn _make(t: *Thread) Thread.Error!void {
-        var rc = try Rc(Map).makeOne(t.vm.allocator);
-        errdefer t.vm.allocator.destroy(rc);
-        rc.obj = Map.init(t.vm.allocator);
-        try t.stack.push(.{
-            .FFI_Ptr = .{
-                .type_id = type_id,
-                .ptr = @ptrCast(*FFI_Ptr.Ptr, rc),
-            },
-        });
-    }
-
-    pub fn _set(t: *Thread) Thread.Error!void {
-        const map = try t.stack.pop();
-        const sym = try t.stack.pop();
-        const value = try t.stack.pop();
-        if (sym != .Symbol) return error.TypeError;
-        if (map != .FFI_Ptr) return error.TypeError;
-        if (map.FFI_Ptr.type_id != type_id) return error.TypeError;
-
-        var rc = map.FFI_Ptr.cast(Rc(Map));
-
-        // TODO handle overwrite
-        try rc.obj.put(sym.Symbol, value);
-
-        t.vm.dropValue(map);
-    }
-
-    pub fn _get(t: *Thread) Thread.Error!void {
-        const map = try t.stack.pop();
-        const sym = try t.stack.pop();
-        if (sym != .Symbol) return error.TypeError;
-        if (map != .FFI_Ptr) return error.TypeError;
-        if (map.FFI_Ptr.type_id != type_id) return error.TypeError;
-
-        var rc = map.FFI_Ptr.cast(Rc(Map));
-
-        if (rc.obj.get(sym.Symbol)) |val| {
-            try t.stack.push(t.vm.dupValue(val));
-            try t.stack.push(.{ .Boolean = true });
-        } else {
-            try t.stack.push(.{ .String = "not found" });
-            try t.stack.push(.{ .Boolean = false });
-        }
-
-        t.vm.dropValue(map);
     }
 };
 
@@ -1679,6 +1497,7 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "parse", .func = f_parse },
 
     .{ .name = "value-type-of", .func = f_value_type_of },
+    .{ .name = "rc-type-of", .func = f_ffi_type_of },
     .{ .name = "ffi-type-of", .func = f_ffi_type_of },
     .{ .name = "word>symbol", .func = f_word_to_symbol },
     .{ .name = "symbol>word", .func = f_symbol_to_word },
@@ -1727,27 +1546,25 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "downgrade", .func = f_downgrade },
     .{ .name = "upgrade", .func = f_upgrade },
 
-    .{ .name = "<string>", .func = ft_string._make },
-    .{ .name = "<string>,clone", .func = ft_string._clone },
-    .{ .name = "string-append!", .func = ft_string._append_in_place },
-    .{ .name = "string>symbol", .func = ft_string._to_symbol },
-    .{ .name = "strget", .func = ft_string._get },
-    .{ .name = "strlen", .func = ft_string._len },
-
     .{ .name = "<record>", .func = ft_record._make },
     .{ .name = "rset!", .func = ft_record._set },
     .{ .name = "rget", .func = ft_record._get },
 
     .{ .name = "<vec>", .func = ft_vec._make },
     .{ .name = "<vec>,capacity", .func = ft_vec._make_capacity },
-    .{ .name = "vdowngrade", .func = ft_vec._downgrade },
-    .{ .name = "vupgrade", .func = ft_vec._upgrade },
     .{ .name = "vec>slice", .func = ft_vec._to_slice },
     .{ .name = "vpush!", .func = ft_vec._push },
     .{ .name = "vset!", .func = ft_vec._set },
     .{ .name = "vget", .func = ft_vec._get },
     .{ .name = "vlen", .func = ft_vec._len },
     .{ .name = "vreverse!", .func = ft_vec._reverse_in_place },
+
+    .{ .name = "<string>", .func = ft_string._make },
+    .{ .name = "<string>,clone", .func = ft_string._clone },
+    .{ .name = "string-append!", .func = ft_string._append_in_place },
+    .{ .name = "string>symbol", .func = ft_string._to_symbol },
+    .{ .name = "strget", .func = ft_string._get },
+    .{ .name = "strlen", .func = ft_string._len },
 
     .{ .name = "<map>", .func = ft_map._make },
     .{ .name = "mget*", .func = ft_map._get },
