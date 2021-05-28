@@ -19,8 +19,10 @@ const ArrayList = std.ArrayList;
 //   as in fancy 'defining syntax at runtime' like forth isnt neccessary
 
 // error handling within orth is just result types
-//   pass errors like type errors and div/0 errors to zig
-//      with info about where it happened
+// pass errors like type errors and div/0 errors to zig
+//   with info about where it happened
+
+// { ... } drop is 'multiline comment'
 
 //;
 
@@ -31,20 +33,17 @@ const ArrayList = std.ArrayList;
 //     define words into a hashtable linked to the current file youre loading
 //       @env or something
 //   vm word_table is the global lookup table for all words in the session
+// threads can have local environments
+//   you can eval with a new thread, and get then env out of it when its done and move it into global env
 
 // unicode is currently not supported but i would like to have it in the future
 //   shouldnt be hard
 //     unicode chars
 //     string_indent need to be updated
-
-// rcs cant really be a built in type?
-// they can probably be builtin
-//   even though it would be nice to abstract some of the code out
-//   if you make rcs built in that adds 3 more builtin types
-//   doesnt stop you from needing finalizers, dupValue, thinking about moves
-//     think it would get in the way
+//     updare rc strings
 
 // TODO need
+// libraries/envs
 // tests
 // error reporting
 //   use error_info
@@ -60,6 +59,8 @@ const ArrayList = std.ArrayList;
 // print contents of return stack
 // get rid of sentinel type
 // access records from within zig easily
+// type info for primitive rc ffi exposed to orth ?
+//   %int construct, %vec constuct, etc
 
 // TODO want
 // prevent invalid symbols
@@ -67,15 +68,13 @@ const ArrayList = std.ArrayList;
 //   cant start with #
 //   symbols can't have spaces
 //     what about string>symbol ?
-// ffi threads
+// threads as an orthtype
 //   cooperative multithreading built into vm ?
 //   modular scheduler thing not part of vm
 //   yeild and resume
 // parser
 //   could do multiline strings like zig
 //     would make the logic easier
-//   multiline comments?
-//     could use ( )
 // u64 type ?
 // dlsym ffi would be cool
 // look into factor's 'fried quotations' to see if that would work for macros
@@ -548,20 +547,17 @@ pub const Rc = struct {
 
     pub const Ptr = opaque {};
 
-    // TODO have type_id here too? / only?
+    type_id: usize,
     ptr: *Ptr,
     ref_ct: usize,
 
-    pub fn init(ptr: anytype) Self {
-        return .{
+    pub fn makeOne(allocator: *Allocator, type_id: usize, ptr: anytype) Allocator.Error!*Self {
+        var rc = try allocator.create(Self);
+        rc.* = .{
+            .type_id = type_id,
             .ptr = @ptrCast(*Ptr, ptr),
             .ref_ct = 0,
         };
-    }
-
-    pub fn makeOne(allocator: *Allocator, ptr: anytype) Allocator.Error!*Self {
-        var rc = try allocator.create(Self);
-        rc.* = Self.init(ptr);
         rc.inc();
         return rc;
     }
@@ -585,48 +581,68 @@ pub const Rc = struct {
 pub const Rc_Ptr = struct {
     const Self = @This();
 
-    type_id: usize,
     rc: *Rc,
     is_weak: bool,
-
-    //     pub fn upgrade(self: *Self) void {
-    //         // TODO assert or return error that is_weak
-    //         self.is_weak = false;
-    //         self.rc.inc();
-    //     }
-    //
-    //     pub fn downgrade(self: *Self) bool {
-    //         // TODO assert or return error that ! is_weak
-    //         self.is_weak = true;
-    //         return self.rc.dec();
-    //     }
-
-    //     pub fn cast(self: Self, comptime T: type) *T {
-    //         return self.rc.cast(T);
-    //     }
 };
 
+// TODO if i want any of these to take a writer,
+//   these fn ptrs cant take 'writer: anytype'
+//     and need to be specialized based on what port types are available
 pub const Rc_Type = struct {
+    display_string_fn: fn (*Thread, Rc_Ptr) Allocator.Error![]u8 = defaultDisplayString,
+    display_weak_string_fn: fn (*Thread, Rc_Ptr) Allocator.Error![]u8 = defaultDisplayWeakString,
+    // write_string_fn: fn (*Thread, Rc_Ptr) Allocator.Error![]u8 = defaultWriteString,
+
     display_fn: fn (*Thread, Rc_Ptr) void = defaultDisplay,
     display_weak_fn: fn (*Thread, Rc_Ptr) void = defaultDisplayWeak,
     equivalent_fn: fn (*Thread, Rc_Ptr, Value) bool = defaultEquivalent,
     finalize_fn: fn (*VM, Rc_Ptr) void = defaultFinalize,
 
+    fn defaultDisplayString(t: *Thread, ptr: Rc_Ptr) Allocator.Error![]u8 {
+        var ret = ArrayList(u8).init(t.vm.allocator);
+
+        const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
+        std.fmt.format(ret.writer(), "rc@({} {})", .{
+            t.vm.symbol_table.items[name_id],
+            @ptrToInt(ptr.rc.ptr),
+        }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            //TODO
+            else => unreachable,
+        };
+
+        return ret.toOwnedSlice();
+    }
+
+    fn defaultDisplayWeakString(t: *Thread, ptr: Rc_Ptr) Allocator.Error![]u8 {
+        var ret = ArrayList(u8).init(t.vm.allocator);
+
+        const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
+        std.fmt.format(ret.writer(), "rc@({} {})W", .{
+            t.vm.symbol_table.items[name_id],
+            @ptrToInt(ptr.rc.ptr),
+        }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            //TODO
+            else => unreachable,
+        };
+
+        return ret.toOwnedSlice();
+    }
+
     fn defaultDisplay(t: *Thread, ptr: Rc_Ptr) void {
-        const name_id = t.vm.type_table.items[ptr.type_id].name_id;
+        const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
         std.debug.print("rc@({} {})", .{
             t.vm.symbol_table.items[name_id],
-            // TODO ptr to int
-            ptr.rc.ptr,
+            @ptrToInt(ptr.rc.ptr),
         });
     }
 
     fn defaultDisplayWeak(t: *Thread, ptr: Rc_Ptr) void {
-        const name_id = t.vm.type_table.items[ptr.type_id].name_id;
-        std.debug.print("rc-weak@({} {})", .{
+        const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
+        std.debug.print("rc@({} {})W", .{
             t.vm.symbol_table.items[name_id],
-            // TODO ptr to int
-            ptr.rc.ptr,
+            @ptrToInt(ptr.rc.ptr),
         });
     }
 
@@ -663,7 +679,6 @@ pub const FFI_Type = struct {
     fn defaultDrop(t: *VM, ptr: FFI_Ptr) void {}
 };
 
-// TODO do you need this anymore?
 pub const OrthType = struct {
     pub const Type = union(enum) {
         Primitive,
@@ -672,7 +687,6 @@ pub const OrthType = struct {
     };
 
     ty: Type,
-    // TODO is this used anywhere?
     name_id: usize = undefined,
 };
 
@@ -867,7 +881,7 @@ pub const VM = struct {
             }
         }
 
-        // TODO if qstack still has stuff on it thats an error
+        // TODO if literals_stack still has stuff on it thats an error
 
         return ret.toOwnedSlice();
     }
@@ -894,7 +908,7 @@ pub const VM = struct {
         switch (val) {
             .Rc_Ptr => |ptr| {
                 if (!ptr.is_weak and !ptr.rc.dec()) {
-                    self.type_table.items[ptr.type_id].ty.Rc.finalize_fn(self, ptr);
+                    self.type_table.items[ptr.rc.type_id].ty.Rc.finalize_fn(self, ptr);
                     self.allocator.destroy(ptr.rc);
                 }
             },
@@ -907,6 +921,7 @@ pub const VM = struct {
 
     //;
 
+    // TODO check types dont have same name?
     // returns type id
     pub fn installType(self: *Self, name: []const u8, ty: OrthType) Allocator.Error!usize {
         const idx = self.type_table.items.len;
@@ -1014,7 +1029,7 @@ pub const Thread = struct {
             },
             .FFI_Fn => |val| std.debug.print("fn({})", .{self.vm.symbol_table.items[val.name]}),
             .Rc_Ptr => |ptr| {
-                const ty = self.vm.type_table.items[ptr.type_id].ty.Rc;
+                const ty = self.vm.type_table.items[ptr.rc.type_id].ty.Rc;
                 if (ptr.is_weak) {
                     ty.display_weak_fn(self, ptr);
                 } else {

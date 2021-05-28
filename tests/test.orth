@@ -1,66 +1,63 @@
-"rw" "file" <file>,open unwrap .stack'
-{ "hello" swap file-write-all } keep
-file-read-all .stack'
+"todo" open-input-file unwrap
+{ read-line,p } keep
+{ read-line,p } keep
+{ read-line,p } keep
+{ read-line,p } keep
+.stack'
+
+[ ]vec :v @
+"w" "file" <file>,open unwrap
+{ v downgrade unwrap swap file.display } keep
+
+; read-line .stack'
+
+
+
 
 {
 
-; { :char :lock } :cell <record-type> :%cell @
+{ bi* } :bis @
 
-; :chch :lolo %cell construct :c @
-
-; #t :char c set-field!
-; c
-; .stack'
-
-{ :blah :wa } :name @record
-5 6 make-name
-{ name-blah } keep
-{ :hello swap name-blah! } keep
-{ name-blah } keep
+#\space 32 { char>int } { int>char } bis
 .stack'
 
-%iterator .stack'
-
-3 always
-{ next! } keep
-{ next! } keep
-{ next! } keep
-{ next! } keep
-.stack'
+; is there a way to define private words this way
 
 {
+  { } :make @
+  { make } :make,v2 @
+  { } :get @
+  { } :set @
+} :&vec @
 
-{ :a :b :c } :slc @value
+{ { :rename :make :make-vec }
+  { :prefix :* :v }
+} set-renaming-rules!
+&vec
+clear-renaming-rules!
 
-:a slc index-of,eq
-:b slc index-of,eq
-:d slc index-of,eq
+{ rules ...  }
+:&vec import
 
-.stack'
+{ :a
+  :b
+  :c
+  :d
+  { :e 100 }
+} :thing @enum
 
-
-{
-{ { { dup 0 > } { drop :pos } }
-  { { dup 0 < } { drop :neg } }
-  { drop :zero }
+{ { { dup thing.a = } { } }
+  { { dup thing.b = } { } }
+  { { dup thing.c = } { } }
+  { { dup thing.d = } { } }
+  { }
 } cond
-} :tst @
 
-5 tst
-0 tst
--5 tst
-.stack
-
-1 :one @
-<map> :v @
-
-{ 1 2 3 } :one-two-three @value
-
-one-two-three
-one
-"asdf" :a v mset!
-v
-.stack
-} drop
+{ { thing.a { } }
+  { thing.b { } }
+  { thing.c { } }
+  { thing.d { } }
+  { }
+} case
 
 } drop

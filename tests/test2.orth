@@ -1,0 +1,80 @@
+{
+
+"rw" "file" <file>,open unwrap .stack'
+{ "hello" swap file-write-all } keep
+file-read-all .stack'
+
+<map>
+downgrade
+
+<map>
+dup
+downgrade
+.stack'
+
+{ 1 2 3 } slice>vec
+
+; { :char :lock } :cell <record-type> :%cell @
+
+; :chch :lolo %cell construct :c @
+
+; #t :char c set-field!
+; c
+; .stack'
+
+{ :blah :wa } :name @record
+5 6 make-name
+{ name.blah } keep
+{ :hello swap name.blah! } keep
+{ name.blah } keep
+.stack'
+
+%iterator .stack'
+
+} drop
+
+{
+
+3 always
+{ next! } keep
+{ next! } keep
+{ next! } keep
+{ next! } keep
+.stack'
+
+{
+
+{ :a :b :c } :slc @value
+
+:a slc index-of,eq
+:b slc index-of,eq
+:d slc index-of,eq
+
+.stack'
+
+
+{
+{ { { dup 0 > } { drop :pos } }
+  { { dup 0 < } { drop :neg } }
+  { drop :zero }
+} cond
+} :tst @
+
+5 tst
+0 tst
+-5 tst
+.stack
+
+1 :one @
+<map> :v @
+
+{ 1 2 3 } :one-two-three @value
+
+one-two-three
+one
+"asdf" :a v mset!
+v
+.stack
+} drop
+
+} drop

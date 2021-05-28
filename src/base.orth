@@ -3,7 +3,7 @@
 ;   @alias
 ;     { ref unwrap } dip @
 ;   rename bi* bi^ to bis and bia
-;   scollect!
+;   strcollect!
 ;   return stack accessors
 ;   over can be written like { dup } dip swap
 ;     pick can probably be done like this too
@@ -44,10 +44,11 @@
 ; } :eval,restore @
 
 { ; TODO
+
 { dup value-type-of :ffi-ptr eq?
   { dup ffi-type-of :record eq?
     { dup record-type-of :callable eq?
-      { { callable-data } { callable-q eval } bi }
+      { { callable.data } { callable.q eval } bi }
       { eval' }
       ? eval' }
     { eval' }
@@ -55,6 +56,7 @@
   { eval' }
   ? eval'
 } :eval @
+
 } drop
 
 { eval' } :eval @
@@ -130,11 +132,12 @@
 
 ; =====
 
-{ swap >restore 1 eval,restore
+{ 1 eval,restore
 } :dip
 "( x q -- x )\nremove x from the stack. eval q. then restore x to the stack"
 @doc
 
+; TODO these can just use 2 eval,restore 3 eval,restore etc
 { swap { dip } dip
 } :2dip
 "( x y q -- x y )\nremove x and y from the stack. eval q. then restore x and y to the stack"
@@ -259,13 +262,13 @@
 
 ; types ==
 
+; TODO
 { dup ffi-ptr?
   { dup record?
     { record-type-of }
     { ffi-type-of }
     if
     }
-  ; TODO
   drop
   { ffi-type-of }
   { value-type-of }
@@ -282,6 +285,7 @@
 { value-type-of :symbol eq? } :symbol? @
 { value-type-of :slice eq? } :slice? @
 { value-type-of :ffi-fn eq? } :ffi-fn? @
+{ value-type-of :rc-ptr eq? } :rc-ptr? @
 { value-type-of :ffi-ptr eq? } :ffi-ptr? @
 
 { dup ffi-ptr?
@@ -392,6 +396,8 @@
 
 ; slices ===
 
+{ ; TODO
+
 { 2dup { slen } dip <=
   { 3drop #f #f }
   { 3dup swap sget eq?
@@ -406,6 +412,8 @@
 { 0 index-of,eq'
 } :index-of,eq @
 
+} drop
+
 ; records ===
 
 ; TODO
@@ -414,62 +422,60 @@
 ;   display
 ;   eqv?
 
-{ 0 swap rget
-} :record-type-type @
-
-{ 1 swap rget
-} :record-type-name @
-
-{ 2 swap rget
-} :record-type-field-tags @
+{ 0 swap rget } :record-type.type @
+{ 1 swap rget } :record-type.name @
+{ 2 swap rget } :record-type.field-tags @
+{ 0 swap rset! } :record-type.type! @
+{ 1 swap rset! } :record-type.name! @
+{ 2 swap rset! } :record-type.field-tags! @
 
 3 <record>
-{ { downgrade } keep 0 swap rset! } keep
-{ :record-type swap 1 swap rset! } keep
-{ { :name :field-tags } swap 2 swap rset! } keep
+{ { dup downgrade unwrap  swap record-type.type! }
+  { :record-type          swap record-type.name! }
+  { { :name :field-tags } swap record-type.field-tags! }
+  tri } keep
 :%record-type @
 
 { 3 <record>
-  { { %record-type swap 0 swap rset! }
-    { 1 swap rset! }
-    { 2 swap rset! }
+  { { %record-type swap record-type.type! }
+    { record-type.name! }
+    { record-type.field-tags! }
     tri } keep
 } :<record-type> @
 
-{ 0 swap rget
-} :record-type-of @
+{ 0 swap rget } :record.type @
+{ 0 swap rset! } :record.type! @
 
-{ record-type-of record-type-field-tags slen
-} :record-field-ct @
+{ record.type record-type.field-tags slen
+} :record.field-ct @
 
-{ record-type-of record-type-field-tags index-of,eq
-} :record-field-index @
+; { record.type record-type.field-tags index-of,eq
+; } :record.field-index @
 
-{ 2dup { record-field-ct } dip <=
+{ 2dup { record.field-ct } dip <=
   { drop }
-  { { over record-field-ct swap - swap rset! } 2keep
+  { { over record.field-ct swap - swap rset! } 2keep
     1 + construct' }
   if
 } :construct'
 ; ( record n -- )
 @
 
-{ dup record-type-field-tags slen 1 + <record>
-  { 0 swap rset! } keep
+{ dup record-type.field-tags slen 1 + <record>
+  { record.type! } keep
   0 construct'
 } :construct @
 
-{ record-type-of eq?
-} :check-type @
-
-{ { record-field-index unwrap 1 + } keep rset!
-} :set-field! @
+; { record.type eq?
+; } :is? @
 
 ; def-record macros
 
 { dup symbol>string "%" string-append string>symbol { <record-type> } dip @
 } :def-record'type @
 
+; TODO maybe dont have this
+; %type construct is probably fine
 { nip
   :construct symbol>word swap
   symbol>string
@@ -490,8 +496,8 @@
   { "%" string-append string>symbol symbol>word }
   { "?" swap string-append string>symbol }
   bi
-  :record-type-of symbol>word swap
-  ; \eq? \%cell \record-type-of :cell?
+  :record.type symbol>word swap
+  ; \eq? \%cell \record.type :cell?
   { <vec>
     { vpush! } keep
     { vpush! } keep
@@ -534,7 +540,7 @@
 ; ( name-str field-names n -- )
 @
 
-{ symbol>string "-" swap string-append! swap 0 def-record'accessors'
+{ symbol>string "." swap string-append! swap 0 def-record'accessors'
 } :def-record'accessors
 ; ( field-names symbol -- )
 @
@@ -559,15 +565,15 @@
 { :obj :check :next } :iterator @record
 ; :make-iterator ref unwrap :<iterator> @
 { make-iterator } :<iterator> @
-{ dup iterator-check eval } :should-continue? @
-{ dup iterator-next eval } :next! @
+{ dup iterator.check eval } :should-continue? @
+{ dup iterator.next eval } :next! @
 
 ;
 
 { :val } :alwayser @record
 { make-alwayser
   { drop #t }
-  { iterator-obj alwayser-val #t }
+  { iterator.obj alwayser.val #t }
   <iterator>
 } :always @
 
@@ -575,12 +581,12 @@
 
 { :iter :fn } :mapper @record
 { make-mapper
-  { iterator-obj mapper-iter should-continue? }
+  { iterator.obj mapper.iter should-continue? }
   { dup should-continue?
-    { iterator-obj
-      { mapper-iter next! }
+    { iterator.obj
+      { mapper.iter next! }
       { swap
-        { mapper-fn eval #t }
+        { mapper.fn eval #t }
         { drop #f }
         if }
       bi }
@@ -594,12 +600,12 @@
 
 { :iter :fn } :filterer @record
 { make-filterer
-  { iterator-obj filterer-iter should-continue? }
+  { iterator.obj filterer.iter should-continue? }
   { dup should-continue?
-    { iterator-obj
-      { filterer-iter next! }
+    { iterator.obj
+      { filterer.iter next! }
       { swap
-        { { dup } dip filterer-fn eval #t }
+        { { dup } dip filterer.fn eval #t }
         { drop #f #f }
         if }
       bi
@@ -648,18 +654,18 @@
 ; :make-pair ref unwrap :<pair> @
 { make-pair } :<pair> @
 
-{ { pair-first } { pair-second } bi
+{ { pair.first } { pair.second } bi
 } :pair>stack @
 
 { :a :b } :zipper @record
 
-{ { zipper-a } { zipper-b } bi { should-continue? } both?
-} :zipper-should-continue? @
+{ { zipper.a } { zipper.b } bi { should-continue? } both?
+} :zipper.should-continue? @
 
 { make-zipper
-  { iterator-obj zipper-should-continue? }
+  { iterator.obj zipper.should-continue? }
   { dup should-continue?
-    { iterator-obj { zipper-a } { zipper-b } bi { next! } bi^
+    { iterator.obj { zipper.a } { zipper.b } bi { next! } bi^
       { swap } dip and
       { <pair> #t }
       { 2drop #f #f }
@@ -674,18 +680,18 @@
 
 { :inc :stop :acc } :counter @record
 
-{ { counter-acc } { counter-stop } bi <
-} :counter-should-continue? @
+{ { counter.acc } { counter.stop } bi <
+} :counter.should-continue? @
 
-{ { { counter-acc } { counter-inc } bi + } keep counter-acc!
-} :counter-increment! @
+{ { { counter.acc } { counter.inc } bi + } keep counter.acc!
+} :counter.increment! @
 
 ; TODO make sure inc != 0
 ; if you want to cound with floats, this 0 needs to be a float
 { 0 make-counter
-  { iterator-obj counter-should-continue? }
+  { iterator.obj counter.should-continue? }
   { dup should-continue?
-    { iterator-obj { counter-acc } { counter-increment! } bi #t }
+    { iterator.obj { counter.acc } { counter.increment! } bi #t }
     { drop #f }
     if
     }
@@ -694,6 +700,9 @@
 
 ;
 
+; TODO rename to seuqunce.iterator
+; slice.iterator
+; etc
 { { 1 swap count } { always } bi*
   zip
 } :sequence-iter
@@ -717,11 +726,7 @@
   { pair>stack - 1 - } map
 } :stack-iter @
 
-; TODO write these in zig
-
-{ slice-iter vcollect!
-} :slice>vec @
-
+; TODO write this in zig
 { string-iter vcollect!
 } :string>vec @
 
@@ -732,20 +737,66 @@
 { :saved-val :q } :curried @record
 
 { make-curried
-  { { curried-saved-val } { curried-q eval } bi }
+  { { curried.saved-val } { curried.q eval } bi }
   make-callable
 } :curry @
 
 { :p :q } :composed @record
 
 { make-composed
-  { { composed-p eval } { composed-q eval } bi }
+  { { composed.p eval } { composed.q eval } bi }
   make-callable
 } :compose @
 
 ; =====
 
-; :in <file>,std unwrap :stdin @
+{ :data
+  :read-char-fn
+  :peek-char-fn
+  :read-delimiter-fn
+  :read-all-fn
+} :input-port @record
+
+{ { input-port.data } { input-port.read-char-fn } bi eval
+} :read-char,p @
+
+{ { input-port.data } { input-port.peek-char-fn } bi eval
+} :peek-char,p @
+
+{ #\newline swap
+  { input-port.data } { input-port.read-delimiter-fn } bi eval
+} :read-line,p @
+
+{ { input-port.data } { input-port.read-all-fn } bi eval
+} :read-all,p @
+
+{
+:file.read-char ref unwrap
+:file.peek-char ref unwrap
+:file.read-delimiter ref unwrap
+:file.read-all ref unwrap
+make-input-port
+} :<file-input-port> @
+
+{ "r" swap <file>,open
+  { <file-input-port> #t }
+  { #f }
+  if
+} :open-input-file @
+
+{ :data :display-fn :write-fn } :oport @
+
+
+{
+} :outport.display!
+; ( value port -- )
+@
+
+:in <file>,std unwrap :stdin-file @
+stdin-file <file-input-port> :stdin @
+
+{ stdin read-line,p } :read-line @
+
 ; :out <file>,std unwrap :stdout @
 ; TODO
 ; :err <file>,std unwrap :stderr @
