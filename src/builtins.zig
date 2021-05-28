@@ -216,12 +216,7 @@ fn writerDisplayValue(writer: anytype, t: *Thread, value: Value) !void {
     switch (value) {
         .Int => |val| try std.fmt.format(writer, "{}", .{val}),
         .Float => |val| try std.fmt.format(writer, "{d}f", .{val}),
-        .Char => |val| switch (val) {
-            ' ' => try std.fmt.format(writer, "#\\space", .{}),
-            '\n' => try std.fmt.format(writer, "#\\newline", .{}),
-            '\t' => try std.fmt.format(writer, "#\\tab", .{}),
-            else => try std.fmt.format(writer, "#\\{c}", .{val}),
-        },
+        .Char => |val| try std.fmt.format(writer, "{c}", .{val}),
         .Boolean => |val| {
             const str = if (val) "#t" else "#f";
             try std.fmt.format(writer, "{s}", .{str});
@@ -256,6 +251,7 @@ fn writerDisplayValue(writer: anytype, t: *Thread, value: Value) !void {
     }
 }
 
+// TODO
 fn writerWriteValue(writer: anytype, t: *Thread, value: Value) !void {
     switch (value) {
         .Int => |val| std.fmt.format(writer, "{}", .{val}),
@@ -924,12 +920,37 @@ pub const ft_vec = struct {
         type_id = try vm.installType("vec", .{
             .ty = .{
                 .Rc = .{
+                    .display_string_fn = display_string,
                     .display_fn = display,
                     // .display_weak_fn = display_weak,
                     .finalize_fn = finalize,
                 },
             },
         });
+    }
+
+    fn display_string(t: *Thread, ptr: Rc_Ptr) Allocator.Error![]u8 {
+        const vec = ptr.rc.cast(Vec);
+
+        var ret = ArrayList(u8).init(t.vm.allocator);
+
+        const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
+        std.fmt.format(ret.writer(), "v[ ", .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            //TODO
+            else => unreachable,
+        };
+        // for (vec.items) |v| {
+        // t.nicePrintValue(v);
+        // std.debug.print(" ", .{});
+        // }
+        std.fmt.format(ret.writer(), "]", .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            //TODO
+            else => unreachable,
+        };
+
+        return ret.toOwnedSlice();
     }
 
     pub fn display(t: *Thread, ptr: Rc_Ptr) void {
@@ -1661,13 +1682,13 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = ".rstack'", .func = f_print_rstack },
     .{ .name = ".current'", .func = f_print_current },
 
-    .{ .name = "display", .func = f_display },
+    .{ .name = "display'", .func = f_display },
 
     .{ .name = "read", .func = f_read },
     .{ .name = "parse", .func = f_parse },
 
     .{ .name = "value-type-of", .func = f_value_type_of },
-    .{ .name = "rc-type-of", .func = f_ffi_type_of },
+    .{ .name = "rc-type-of", .func = f_rc_type_of },
     .{ .name = "ffi-type-of", .func = f_ffi_type_of },
     .{ .name = "word>symbol", .func = f_word_to_symbol },
     .{ .name = "symbol>word", .func = f_symbol_to_word },

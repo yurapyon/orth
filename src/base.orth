@@ -45,8 +45,8 @@
 
 { ; TODO
 
-{ dup value-type-of :ffi-ptr eq?
-  { dup ffi-type-of :record eq?
+{ dup value-type-of :rc-ptr eq?
+  { dup rc-type-of :record eq?
     { dup record-type-of :callable eq?
       { { callable.data } { callable.q eval } bi }
       { eval' }
@@ -263,6 +263,7 @@
 ; types ==
 
 ; TODO
+{
 { dup ffi-ptr?
   { dup record?
     { record-type-of }
@@ -274,6 +275,7 @@
   { value-type-of }
   if
 } :type-of @
+} drop
 
 { value-type-of :int eq? } :int? @
 { value-type-of :float eq? } :float? @
@@ -288,27 +290,27 @@
 { value-type-of :rc-ptr eq? } :rc-ptr? @
 { value-type-of :ffi-ptr eq? } :ffi-ptr? @
 
-{ dup ffi-ptr?
-  { ffi-type-of :string eq? }
-  { #f }
+{ dup rc-ptr?
+  { rc-type-of :string eq? }
+  { drop #f }
   if
 } :string? @
 
-{ dup ffi-ptr?
-  { ffi-type-of :record eq? }
-  { #f }
+{ dup rc-ptr?
+  { rc-type-of :record eq? }
+  { drop #f }
   if
 } :record? @
 
-{ dup ffi-ptr?
-  { ffi-type-of :vec eq? }
-  { #f }
+{ dup rc-ptr?
+  { rc-type-of :vec eq? }
+  { drop #f }
   if
 } :vec? @
 
-{ dup ffi-ptr?
-  { ffi-type-of :map eq? }
-  { #f }
+{ dup rc-ptr?
+  { rc-type-of :map eq? }
+  { drop #f }
   if
 } :map? @
 
@@ -425,18 +427,23 @@
 { 0 swap rget } :record-type.type @
 { 1 swap rget } :record-type.name @
 { 2 swap rget } :record-type.field-tags @
+{ 3 swap rget } :record-type.display-fn @
+{ 4 swap rget } :record-type.write-fn @
 { 0 swap rset! } :record-type.type! @
 { 1 swap rset! } :record-type.name! @
 { 2 swap rset! } :record-type.field-tags! @
+{ 3 swap rset! } :record-type.display-fn! @
+{ 4 swap rset! } :record-type.write-fn! @
 
-3 <record>
+5 <record>
+; TODO cleave instead of this
 { { dup downgrade unwrap  swap record-type.type! }
   { :record-type          swap record-type.name! }
-  { { :name :field-tags } swap record-type.field-tags! }
+  { { :name :field-tags :display-fn :write-fn } swap record-type.field-tags! }
   tri } keep
 :%record-type @
 
-{ 3 <record>
+{ 5 <record>
   { { %record-type swap record-type.type! }
     { record-type.name! }
     { record-type.field-tags! }
@@ -748,7 +755,7 @@
   make-callable
 } :compose @
 
-; =====
+; files ===
 
 { :data
   :read-char-fn
@@ -784,11 +791,43 @@ make-input-port
   if
 } :open-input-file @
 
-{ :data :display-fn :write-fn } :oport @
-
+{ :data
+  :display-fn
+  :write-fn
+  :write-char
+  :write-all-fn
+} :output-port @record
 
 {
-} :outport.display!
+:file.display ref unwrap
+#f
+:file.write-char ref unwrap
+:file.write-all ref unwrap
+make-output-port
+} :<file-output-port> @
+
+{ "w" swap <file>,open
+  { <file-output-port> #t }
+  { #f }
+  if
+} :open-output-file @
+
+{ { output-port.data } { output-port.display-fn } bi eval
+} :display,p,unformatted
+; ( value port -- )
+@
+
+; TODO raise type error rather than panic
+{ dup record? { panic } unless
+  dup output-port? { panic } unless
+  over record?
+  { over record.type record-type.display-fn dup sentinel?
+    { drop display,p,unformatted }
+    { eval }
+    if }
+  { display,p,unformatted }
+  if
+} :display,p
 ; ( value port -- )
 @
 
@@ -797,6 +836,11 @@ stdin-file <file-input-port> :stdin @
 
 { stdin read-line,p } :read-line @
 
-; :out <file>,std unwrap :stdout @
+:out <file>,std unwrap :stdout-file @
+stdout-file <file-output-port> :stdout @
+
+{ stdout display,p } :display @
+{ stdout display,p,unformatted } :display,unformatted @
+
 ; TODO
 ; :err <file>,std unwrap :stderr @

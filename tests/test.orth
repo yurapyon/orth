@@ -3,11 +3,48 @@
 { read-line,p } keep
 { read-line,p } keep
 { read-line,p } keep
-.stack'
+clear-stack
 
-[ ]vec :v @
-"w" "file" <file>,open unwrap
-{ v downgrade unwrap swap file.display } keep
+; "file" open-output-file unwrap
+; {  swap display,p } keep
+
+{ :char :lock } :cell @record
+
+{ { { cell.lock "[" " " ? } dip display,p }
+  { { cell.char }           dip display,p }
+  { { cell.lock "]" " " ? } dip display,p }
+  2tri
+  }
+%cell record-type.display-fn!
+
+{ make-cell } :<cell> @
+
+{ dup pick >=
+  { 3drop }
+  { { { eval } keep } 2dip
+    1 + do-n' }
+  if
+} :do-n' @
+; q do-ct n
+
+{ swap 0 do-n' } :do-n @
+
+{ :vec
+  :width
+  :height
+} :field @record
+
+{ 2dup * <vec>,capacity swap
+  { { #\* #f <cell> swap vpush! } keep } do-n
+} :<field> @
+
+5 5 <field> display newline
+
+newline
+"hey whats up" display newline
+#\C #f make-cell display newline
+#\F #t make-cell display newline
+
 
 ; read-line .stack'
 

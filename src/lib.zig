@@ -42,8 +42,9 @@ const ArrayList = std.ArrayList;
 //     string_indent need to be updated
 //     updare rc strings
 
+// for a vec to print formatted records, zig needs to know aboutrecord type write and display fns
+
 // TODO need
-// libraries/envs
 // tests
 // error reporting
 //   use error_info
