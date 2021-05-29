@@ -32,7 +32,7 @@
 @doc
 
 ; TODO
-; { over value-type-of :ffi-ptr eq?
+; { over value-type-of :raw-ptr eq?
   ; { over ffi-type-of :record eq?
     ; { over record-type-of :callable eq?
       ; ; what to do here ?
@@ -272,7 +272,7 @@
 
 ; TODO
 {
-{ dup ffi-ptr?
+{ dup raw-ptr?
   { dup record?
     { record-type-of }
     { ffi-type-of }
@@ -296,7 +296,7 @@
 { value-type-of :slice eq? } :slice? @
 { value-type-of :ffi-fn eq? } :ffi-fn? @
 { value-type-of :rc-ptr eq? } :rc-ptr? @
-{ value-type-of :ffi-ptr eq? } :ffi-ptr? @
+{ value-type-of :raw-ptr eq? } :raw-ptr? @
 
 { dup rc-ptr?
   { rc-type-of :string eq? }
@@ -825,38 +825,39 @@ make-output-port
 ; display ===
 
 ; wont work for primitive types
+; can probably work for slices
 
 <map> :type-info-table @
 { :display-fn :write-fn } :type-info @record
-{ make-type-info } :<type-info> @
 
-{ { "v[ " swap display,p } keep
-  swap vec.iterator
-  { swap { display,p } keep
-         { " " swap display,p } keep }
-  each!
-  "]" swap display,p }
-; TODO
-#f
-<type-info>
-:vec type-info-table mset!
+{ { { 0 swap sget } { 1 swap sget } bi make-type-info } dip
+  type-info-table mset!
+} :@type-info @
 
-{ swap string.iterator
-  { swap { display,p } keep }
-  each!
-  drop }
-; TODO
-#f
-<type-info>
-:string type-info-table mset!
+{ { { "v[ " swap display,p } keep
+    swap vec.iterator
+    { swap { display,p } keep
+           { " " swap display,p } keep }
+    each!
+    "]" swap display,p }
+  ; TODO
+  #f
+} :vec @type-info
 
-{ { "f(" swap display,p } keep
-  { swap file.filepath swap display,p } keep
-  ")" swap display,p }
-; TODO
-#f
-<type-info>
-:file type-info-table mset!
+{ { swap string.iterator
+    { swap { display,p } keep }
+    each!
+    drop }
+  ; TODO
+  #f
+} :string @type-info
+
+{ { { "f(" swap display,p } keep
+    { swap file.filepath swap display,p } keep
+    ")" swap display,p }
+  ; TODO
+  #f
+} :file @type-info
 
 { { output-port.data } { output-port.display-fn } bi eval
 } :display,p,unformatted
@@ -867,14 +868,17 @@ make-output-port
 { dup record? { panic } unless
   dup output-port? { panic } unless
   over rc-ptr?
-  { over record?
-    { over record.type record-type.display-fn dup sentinel?
-      ; TODO have a better default way to show records
-      { drop display,p,unformatted }
-      { eval }
+  { over rc-ptr.weak?
+    { display,p,unformatted }
+    { over record?
+      { over record.type record-type.display-fn dup sentinel?
+        ; TODO have a better default way to show records
+        { drop display,p,unformatted }
+        { eval }
+        if }
+      { over rc-type-of type-info-table mget
+        type-info.display-fn eval }
       if }
-    { over rc-type-of type-info-table mget
-      type-info.display-fn eval }
     if }
   { display,p,unformatted }
   if

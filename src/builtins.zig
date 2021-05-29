@@ -137,84 +137,29 @@ pub fn f_clear_stack(t: *Thread) Thread.Error!void {
     t.stack.data.items.len = 0;
 }
 
-pub fn f_print_stack(t: *Thread) Thread.Error!void {
-    const len = t.stack.data.items.len;
-    std.debug.print("STACK| len: {}\n", .{len});
-    for (t.stack.data.items) |it, i| {
-        std.debug.print("  {}| ", .{len - i - 1});
-        t.nicePrintValue(it);
-        std.debug.print("\n", .{});
-    }
-}
-
-pub fn f_print_rstack(t: *Thread) Thread.Error!void {
-    const len = t.return_stack.data.items.len;
-    std.debug.print("RSTACK| len: {}\n", .{len});
-    for (t.return_stack.data.items) |it, i| {
-        std.debug.print("  {}| ", .{len - i - 1});
-        t.nicePrintValue(it.value);
-        if (it.restore_ct == std.math.maxInt(usize)) {
-            std.debug.print(" :: max\n", .{});
-        } else {
-            std.debug.print(" :: {}\n", .{it.restore_ct});
-        }
-    }
-}
-
-pub fn f_print_current(t: *Thread) Thread.Error!void {
-    std.debug.print("CURRENT EXEC: {}| {{", .{t.restore_ct});
-    for (t.current_execution) |val| {
-        t.nicePrintValue(val);
-    }
-    std.debug.print("}}\n", .{});
-}
-
-// display/write ===
-
-// fn displayValue(t: *Thread, value: Value) void {
-//     switch (value) {
-//         .Int => |val| std.debug.print("{}", .{val}),
-//         .Float => |val| std.debug.print("{d}f", .{val}),
-//         .Char => |val| switch (val) {
-//             ' ' => std.debug.print("#\\space", .{}),
-//             '\n' => std.debug.print("#\\newline", .{}),
-//             '\t' => std.debug.print("#\\tab", .{}),
-//             else => std.debug.print("#\\{c}", .{val}),
-//         },
-//         .Boolean => |val| {
-//             const str = if (val) "#t" else "#f";
-//             std.debug.print("{s}", .{str});
-//         },
-//         .Sentinel => std.debug.print("#sentinel", .{}),
-//         .Symbol => |val| std.debug.print(":{}", .{t.vm.symbol_table.items[val]}),
-//         .Word => |val| std.debug.print("{}", .{t.vm.symbol_table.items[val]}),
-//         .String => |val| std.debug.print("{}", .{val}),
-//         .Slice => |slc| {
-//             std.debug.print("{{ ", .{});
-//             for (slc) |val| {
-//                 displayValue(t, val);
-//                 std.debug.print(" ", .{});
-//             }
-//             std.debug.print("}}", .{});
-//         },
-//         .FFI_Fn => |val| std.debug.print("fn({})", .{t.vm.symbol_table.items[val.name]}),
-//         .RcPtr => |ptr| {
-//             const ty = t.vm.type_table.items[ptr.rc.type_id].ty.Rc;
-//             if (ptr.is_weak) {
-//                 // ty.display_weak_fn(t, ptr);
-//             } else {
-//                 // ty.display_fn(t, ptr);
-//             }
-//         },
-//         .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.display_fn(t, ptr),
+// pub fn f_print_rstack(t: *Thread) Thread.Error!void {
+//     const len = t.return_stack.data.items.len;
+//     std.debug.print("RSTACK| len: {}\n", .{len});
+//     for (t.return_stack.data.items) |it, i| {
+//         std.debug.print("  {}| ", .{len - i - 1});
+//         t.nicePrintValue(it.value);
+//         if (it.restore_ct == std.math.maxInt(usize)) {
+//             std.debug.print(" :: max\n", .{});
+//         } else {
+//             std.debug.print(" :: {}\n", .{it.restore_ct});
+//         }
 //     }
 // }
-
-// pub fn f_display(t: *Thread) Thread.Error!void {
-//     const val = try t.stack.pop();
-//     displayValue(t, val);
-//     t.vm.dropValue(val);
+//
+// pub fn f_print_current(t: *Thread) Thread.Error!void {
+//     std.debug.print("CURRENT EXEC: {}| {{", .{t.restore_ct});
+//     for (t.current_execution) |val| {
+//         t.nicePrintValue(val);
+//     }
+//     std.debug.print("}}\n", .{});
 // }
+
+// display/write ===
 
 fn writerDisplayValue(writer: anytype, t: *Thread, value: Value) !void {
     switch (value) {
@@ -240,18 +185,26 @@ fn writerDisplayValue(writer: anytype, t: *Thread, value: Value) !void {
         },
         .FFI_Fn => |val| try std.fmt.format(writer, "fn({})", .{t.vm.symbol_table.items[val.name]}),
         .RcPtr => |ptr| {
-            var str: []u8 = undefined;
-            const ty = t.vm.type_table.items[ptr.rc.type_id].ty.Rc;
+            const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
             if (ptr.is_weak) {
-                // str = try ty.display_weak_string_fn(t, ptr);
+                try std.fmt.format(writer, "rc@({} {})W", .{
+                    t.vm.symbol_table.items[name_id],
+                    @ptrToInt(ptr.rc.ptr),
+                });
             } else {
-                // str = try ty.display_string_fn(t, ptr);
+                try std.fmt.format(writer, "rc@({} {})", .{
+                    t.vm.symbol_table.items[name_id],
+                    @ptrToInt(ptr.rc.ptr),
+                });
             }
-            // _ = writer.write(str) catch unreachable;
-            // t.vm.allocator.free(str);
         },
-        // TODO
-        .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.display_fn(t, ptr),
+        .RawPtr => |ptr| {
+            const name_id = t.vm.type_table.items[ptr.type_id].name_id;
+            try std.fmt.format(writer, "ffi@({} {})", .{
+                t.vm.symbol_table.items[name_id],
+                @ptrToInt(ptr.ptr),
+            });
+        },
     }
 }
 
@@ -291,7 +244,7 @@ fn writerWriteValue(writer: anytype, t: *Thread, value: Value) !void {
                 ty.display_fn(t, ptr);
             }
         },
-        .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.display_fn(t, ptr),
+        .RawPtr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.display_fn(t, ptr),
     }
 }
 
@@ -328,7 +281,7 @@ pub fn f_parse(t: *Thread) Thread.Error!void {
     // TODO
     // var rc = try ft_quotation.makeRc(t.vm.allocator);
     // try rc.obj.appendSlice(vals);
-    // try t.evaluateValue(.{ .FFI_Ptr = ft_quotation.ffi_type.makePtr(rc.ref()) }, 0);
+    // try t.evaluateValue(.{ .RawPtr = ft_quotation.ffi_type.makePtr(rc.ref()) }, 0);
 }
 
 // built in types ===
@@ -346,10 +299,10 @@ pub fn f_rc_type_of(t: *Thread) Thread.Error!void {
     t.vm.dropValue(val);
 }
 
-pub fn f_ffi_type_of(t: *Thread) Thread.Error!void {
+pub fn f_raw_type_of(t: *Thread) Thread.Error!void {
     const val = try t.stack.pop();
-    if (val != .FFI_Ptr) return error.TypeError;
-    try t.stack.push(.{ .Symbol = t.vm.type_table.items[val.FFI_Ptr.type_id].name_id });
+    if (val != .RawPtr) return error.TypeError;
+    try t.stack.push(.{ .Symbol = t.vm.type_table.items[val.RawPtr.type_id].name_id });
     t.vm.dropValue(val);
 }
 
@@ -638,8 +591,8 @@ fn areValuesEqual(a: Value, b: Value) bool {
             ptr.func == b.FFI_Fn.func,
         .RcPtr => |ptr| ptr.rc == b.RcPtr.rc and
             ptr.is_weak == b.RcPtr.is_weak,
-        .FFI_Ptr => |ptr| ptr.type_id == b.FFI_Ptr.type_id and
-            ptr.ptr == b.FFI_Ptr.ptr,
+        .RawPtr => |ptr| ptr.type_id == b.RawPtr.type_id and
+            ptr.ptr == b.RawPtr.ptr,
     } else false;
 }
 
@@ -673,7 +626,7 @@ fn areValuesEquivalent(t: *Thread, a: Value, b: Value) bool {
             break :blk true;
         },
         .RcPtr => |ptr| t.vm.type_table.items[ptr.rc.type_id].ty.Rc.equivalent_fn(t, ptr, b),
-        .FFI_Ptr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.equivalent_fn(t, ptr, b),
+        .RawPtr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.equivalent_fn(t, ptr, b),
     } else blk: {
         // TODO
         break :blk false;
@@ -834,27 +787,10 @@ pub const ft_record = struct {
         type_id = try vm.installType("record", .{
             .ty = .{
                 .Rc = .{
-                    // .display_fn = display,
-                    // .display_weak_fn = display_weak,
                     .finalize_fn = finalize,
                 },
             },
         });
-    }
-
-    pub fn display(t: *Thread, ptr: RcPtr) void {
-        const rec = ptr.rc.cast(Record);
-        std.debug.print("r< ", .{});
-        for (rec.*) |v| {
-            t.nicePrintValue(v);
-            std.debug.print(" ", .{});
-        }
-        std.debug.print(">", .{});
-    }
-
-    pub fn display_weak(t: *Thread, ptr: RcPtr) void {
-        const rec = ptr.rc.cast(Record);
-        std.debug.print("r@({x} {})", .{ @ptrToInt(rec), rec.len });
     }
 
     pub fn finalize(vm: *VM, ptr: RcPtr) void {
@@ -931,52 +867,10 @@ pub const ft_vec = struct {
         type_id = try vm.installType("vec", .{
             .ty = .{
                 .Rc = .{
-                    // .display_string_fn = display_string,
-                    // .display_fn = display,
-                    // .display_weak_fn = display_weak,
                     .finalize_fn = finalize,
                 },
             },
         });
-    }
-
-    fn display_string(t: *Thread, ptr: RcPtr) Allocator.Error![]u8 {
-        const vec = ptr.rc.cast(Vec);
-
-        var ret = ArrayList(u8).init(t.vm.allocator);
-
-        const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
-        std.fmt.format(ret.writer(), "v[ ", .{}) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            //TODO
-            else => unreachable,
-        };
-        // for (vec.items) |v| {
-        // t.nicePrintValue(v);
-        // std.debug.print(" ", .{});
-        // }
-        std.fmt.format(ret.writer(), "]", .{}) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            //TODO
-            else => unreachable,
-        };
-
-        return ret.toOwnedSlice();
-    }
-
-    pub fn display(t: *Thread, ptr: RcPtr) void {
-        const vec = ptr.rc.cast(Vec);
-        std.debug.print("v[ ", .{});
-        for (vec.items) |v| {
-            t.nicePrintValue(v);
-            std.debug.print(" ", .{});
-        }
-        std.debug.print("]", .{});
-    }
-
-    pub fn display_weak(t: *Thread, ptr: RcPtr) void {
-        const vec = ptr.rc.cast(Vec);
-        std.debug.print("v@({x} {})", .{ @ptrToInt(vec), vec.items.len });
     }
 
     pub fn finalize(vm: *VM, ptr: RcPtr) void {
@@ -1110,22 +1004,10 @@ pub const ft_string = struct {
         type_id = try vm.installType("string", .{
             .ty = .{
                 .Rc = .{
-                    // .display_fn = display,
-                    // .display_weak_fn = display_weak,
                     .finalize_fn = finalize,
                 },
             },
         });
-    }
-
-    pub fn display(t: *Thread, ptr: RcPtr) void {
-        const string = ptr.rc.cast(String);
-        std.debug.print("\"{}\"", .{string.items});
-    }
-
-    pub fn display_weak(t: *Thread, ptr: RcPtr) void {
-        const string = ptr.rc.cast(String);
-        std.debug.print("\"{}\"W", .{string.items});
     }
 
     pub fn finalize(vm: *VM, ptr: RcPtr) void {
@@ -1308,29 +1190,10 @@ pub const ft_map = struct {
         type_id = try vm.installType("map", .{
             .ty = .{
                 .Rc = .{
-                    // .display_fn = display,
-                    // .display_weak_fn = display_weak,
                     .finalize_fn = finalize,
                 },
             },
         });
-    }
-
-    pub fn display(t: *Thread, ptr: RcPtr) void {
-        const map = ptr.rc.cast(Map);
-        std.debug.print("m[ ", .{});
-        var iter = map.iterator();
-        while (iter.next()) |entry| {
-            std.debug.print("{} ", .{t.vm.symbol_table.items[entry.key]});
-            t.nicePrintValue(entry.value);
-            std.debug.print(" ", .{});
-        }
-        std.debug.print("]", .{});
-    }
-
-    pub fn display_weak(t: *Thread, ptr: RcPtr) void {
-        const map = ptr.rc.cast(Map);
-        std.debug.print("m@({x})", .{@ptrToInt(map)});
     }
 
     pub fn finalize(vm: *VM, ptr: RcPtr) void {
@@ -1410,22 +1273,10 @@ pub const ft_file = struct {
         type_id = try vm.installType("file", .{
             .ty = .{
                 .Rc = .{
-                    // .display_fn = display,
-                    // .display_weak_fn = display_weak,
                     .finalize_fn = finalize,
                 },
             },
         });
-    }
-
-    pub fn display(t: *Thread, ptr: RcPtr) void {
-        const file = ptr.rc.cast(File);
-        std.debug.print("f({})", .{file.filepath});
-    }
-
-    pub fn display_weak(t: *Thread, ptr: RcPtr) void {
-        const file = ptr.rc.cast(File);
-        std.debug.print("f({})W", .{file.filepath});
     }
 
     pub fn finalize(vm: *VM, ptr: RcPtr) void {
@@ -1706,18 +1557,15 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "stack-index", .func = f_stack_index },
     .{ .name = "clear-stack", .func = f_clear_stack },
 
-    // .{ .name = ".stack'", .func = f_print_stack },
     // .{ .name = ".rstack'", .func = f_print_rstack },
     // .{ .name = ".current'", .func = f_print_current },
-
-    // .{ .name = "display'", .func = f_display },
 
     .{ .name = "read", .func = f_read },
     .{ .name = "parse", .func = f_parse },
 
     .{ .name = "value-type-of", .func = f_value_type_of },
     .{ .name = "rc-type-of", .func = f_rc_type_of },
-    .{ .name = "ffi-type-of", .func = f_ffi_type_of },
+    .{ .name = "raw-type-of", .func = f_raw_type_of },
     .{ .name = "word>symbol", .func = f_word_to_symbol },
     .{ .name = "symbol>word", .func = f_symbol_to_word },
     .{ .name = "symbol>string", .func = f_symbol_to_string },
@@ -1766,7 +1614,7 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "sget", .func = f_slice_get },
     .{ .name = "slice>vec", .func = f_slice_to_vec },
 
-    .{ .name = "weak?", .func = f_is_weak },
+    .{ .name = "rc-ptr.weak?", .func = f_is_weak },
     .{ .name = "downgrade", .func = f_downgrade },
     .{ .name = "upgrade", .func = f_upgrade },
 

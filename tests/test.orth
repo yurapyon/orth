@@ -1,7 +1,10 @@
 :a :b :c stack.iterator
 { 2 + stack-index } map
-vcollect!
-display newline
+vcollect! :vec @
+vec
+vec downgrade
+.stack
+
 clear-stack
 
 :a :b :c [ "w" "build.zig" <file>,open ]vec

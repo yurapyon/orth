@@ -513,7 +513,7 @@ pub const FFI_Fn = struct {
     func: Function,
 };
 
-pub const FFI_Ptr = struct {
+pub const RawPtr = struct {
     const Self = @This();
 
     pub const Ptr = opaque {};
@@ -538,7 +538,7 @@ pub const Value = union(enum) {
     Slice: []const Value,
     FFI_Fn: FFI_Fn,
     RcPtr: RcPtr,
-    FFI_Ptr: FFI_Ptr,
+    RawPtr: RawPtr,
 };
 
 pub const ValueType = @TagType(Value);
@@ -592,62 +592,8 @@ pub const RcPtr = struct {
 //   these fn ptrs cant take 'writer: anytype'
 //     and need to be specialized based on what port types are available
 pub const RcType = struct {
-    // display_string_fn: fn (*Thread, RcPtr) Allocator.Error![]u8 = defaultDisplayString,
-    // display_weak_string_fn: fn (*Thread, RcPtr) Allocator.Error![]u8 = defaultDisplayWeakString,
-    // write_string_fn: fn (*Thread, RcPtr) Allocator.Error![]u8 = defaultWriteString,
-
-    // display_fn: fn (*Thread, RcPtr) void = defaultDisplay,
-    // display_weak_fn: fn (*Thread, RcPtr) void = defaultDisplayWeak,
     equivalent_fn: fn (*Thread, RcPtr, Value) bool = defaultEquivalent,
     finalize_fn: fn (*VM, RcPtr) void = defaultFinalize,
-
-    fn defaultDisplayString(t: *Thread, ptr: RcPtr) Allocator.Error![]u8 {
-        var ret = ArrayList(u8).init(t.vm.allocator);
-
-        const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
-        std.fmt.format(ret.writer(), "rc@({} {})", .{
-            t.vm.symbol_table.items[name_id],
-            @ptrToInt(ptr.rc.ptr),
-        }) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            //TODO
-            else => unreachable,
-        };
-
-        return ret.toOwnedSlice();
-    }
-
-    fn defaultDisplayWeakString(t: *Thread, ptr: RcPtr) Allocator.Error![]u8 {
-        var ret = ArrayList(u8).init(t.vm.allocator);
-
-        const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
-        std.fmt.format(ret.writer(), "rc@({} {})W", .{
-            t.vm.symbol_table.items[name_id],
-            @ptrToInt(ptr.rc.ptr),
-        }) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            //TODO
-            else => unreachable,
-        };
-
-        return ret.toOwnedSlice();
-    }
-
-    fn defaultDisplay(t: *Thread, ptr: RcPtr) void {
-        const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
-        std.debug.print("rc@({} {})", .{
-            t.vm.symbol_table.items[name_id],
-            @ptrToInt(ptr.rc.ptr),
-        });
-    }
-
-    fn defaultDisplayWeak(t: *Thread, ptr: RcPtr) void {
-        const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
-        std.debug.print("rc@({} {})W", .{
-            t.vm.symbol_table.items[name_id],
-            @ptrToInt(ptr.rc.ptr),
-        });
-    }
 
     fn defaultEquivalent(t: *Thread, ptr: RcPtr, val: Value) bool {
         return false;
@@ -657,29 +603,20 @@ pub const RcType = struct {
 };
 
 pub const FFI_Type = struct {
-    display_fn: fn (*Thread, FFI_Ptr) void = defaultDisplay,
-    equivalent_fn: fn (*Thread, FFI_Ptr, Value) bool = defaultEquivalent,
+    equivalent_fn: fn (*Thread, RawPtr, Value) bool = defaultEquivalent,
     // TODO can this throw errors
-    dup_fn: fn (*VM, FFI_Ptr) FFI_Ptr = defaultDup,
-    drop_fn: fn (*VM, FFI_Ptr) void = defaultDrop,
+    dup_fn: fn (*VM, RawPtr) RawPtr = defaultDup,
+    drop_fn: fn (*VM, RawPtr) void = defaultDrop,
 
-    fn defaultDisplay(t: *Thread, ptr: FFI_Ptr) void {
-        const name_id = t.vm.type_table.items[ptr.type_id].name_id;
-        std.debug.print("*<{} {}>", .{
-            t.vm.symbol_table.items[name_id],
-            ptr.ptr,
-        });
-    }
-
-    fn defaultEquivalent(t: *Thread, ptr: FFI_Ptr, val: Value) bool {
+    fn defaultEquivalent(t: *Thread, ptr: RawPtr, val: Value) bool {
         return false;
     }
 
-    fn defaultDup(t: *VM, ptr: FFI_Ptr) FFI_Ptr {
+    fn defaultDup(t: *VM, ptr: RawPtr) RawPtr {
         return ptr;
     }
 
-    fn defaultDrop(t: *VM, ptr: FFI_Ptr) void {}
+    fn defaultDrop(t: *VM, ptr: RawPtr) void {}
 };
 
 pub const OrthType = struct {
@@ -753,7 +690,7 @@ pub const VM = struct {
             .{ .id = .Slice, .name = "slice" },
             .{ .id = .FFI_Fn, .name = "ffi-fn" },
             .{ .id = .RcPtr, .name = "rc-ptr" },
-            .{ .id = .FFI_Ptr, .name = "ffi-ptr" },
+            .{ .id = .RawPtr, .name = "raw-ptr" },
         };
         for (primitive_types) |p| {
             std.debug.assert(@enumToInt(p.id) ==
@@ -900,8 +837,8 @@ pub const VM = struct {
 
                 return val;
             },
-            .FFI_Ptr => |ptr| return .{
-                .FFI_Ptr = self.type_table.items[ptr.type_id].ty.FFI.dup_fn(self, ptr),
+            .RawPtr => |ptr| return .{
+                .RawPtr = self.type_table.items[ptr.type_id].ty.FFI.dup_fn(self, ptr),
             },
             else => return val,
         }
@@ -915,7 +852,7 @@ pub const VM = struct {
                     self.allocator.destroy(ptr.rc);
                 }
             },
-            .FFI_Ptr => |ptr| {
+            .RawPtr => |ptr| {
                 self.type_table.items[ptr.type_id].ty.FFI.drop_fn(self, ptr);
             },
             else => {},
@@ -1000,49 +937,6 @@ pub const Thread = struct {
         self.stack.deinit();
     }
 
-    //;
-
-    // TODO would be nice if i could move this into vm
-    //  but FFI_Ptr.display_fn needs *Thread
-    //     pub fn nicePrintValue(self: *Self, value: Value) void {
-    //         switch (value) {
-    //             .Int => |val| std.debug.print("{}", .{val}),
-    //             .Float => |val| std.debug.print("{d}f", .{val}),
-    //             .Char => |val| switch (val) {
-    //                 ' ' => std.debug.print("#\\space", .{}),
-    //                 '\n' => std.debug.print("#\\newline", .{}),
-    //                 '\t' => std.debug.print("#\\tab", .{}),
-    //                 else => std.debug.print("#\\{c}", .{val}),
-    //             },
-    //             .Boolean => |val| {
-    //                 const str = if (val) "#t" else "#f";
-    //                 std.debug.print("{s}", .{str});
-    //             },
-    //             .Sentinel => std.debug.print("#sentinel", .{}),
-    //             .Symbol => |val| std.debug.print(":{}", .{self.vm.symbol_table.items[val]}),
-    //             .Word => |val| std.debug.print("\\{}", .{self.vm.symbol_table.items[val]}),
-    //             .String => |val| std.debug.print("\"{}\"L", .{val}),
-    //             .Slice => |slc| {
-    //                 std.debug.print("{{ ", .{});
-    //                 for (slc) |val| {
-    //                     self.nicePrintValue(val);
-    //                     std.debug.print(" ", .{});
-    //                 }
-    //                 std.debug.print("}}L", .{});
-    //             },
-    //             .FFI_Fn => |val| std.debug.print("fn({})", .{self.vm.symbol_table.items[val.name]}),
-    //             .RcPtr => |ptr| {
-    //                 const ty = self.vm.type_table.items[ptr.rc.type_id].ty.Rc;
-    //                 if (ptr.is_weak) {
-    //                     // ty.display_weak_fn(self, ptr);
-    //                 } else {
-    //                     // ty.display_fn(self, ptr);
-    //                 }
-    //             },
-    //             .FFI_Ptr => |ptr| self.vm.type_table.items[ptr.type_id].ty.FFI.display_fn(self, ptr),
-    //         }
-    //     }
-    //
     //;
 
     // NOTE: just moves value, does not dup it
