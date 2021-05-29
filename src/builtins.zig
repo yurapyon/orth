@@ -23,6 +23,8 @@ usingnamespace lib;
 
 // TODO need
 // move eqv fn for records into orth
+// maybe display takes a boolean to mark wether to display human or machine readable
+//   rather than having display and write
 // value iterator that can iterate over slices
 //   if iterating over a non slice value, just return that value once then return null
 //   for display and write
@@ -130,7 +132,7 @@ pub fn f_stack_index(t: *Thread) Thread.Error!void {
     try t.stack.push(t.vm.dupValue((try t.stack.index(@intCast(usize, idx.Int))).*));
 }
 
-pub fn f_clear_stack(t: *Thread) Thread.Error!void {
+pub fn f_stack_clear(t: *Thread) Thread.Error!void {
     for (t.stack.data.items) |v| {
         t.vm.dropValue(v);
     }
@@ -198,7 +200,7 @@ fn writerDisplayValue(writer: anytype, t: *Thread, value: Value) !void {
                 });
             }
         },
-        .RawPtr => |ptr| {
+        .UnmanagedPtr => |ptr| {
             const name_id = t.vm.type_table.items[ptr.type_id].name_id;
             try std.fmt.format(writer, "ffi@({} {})", .{
                 t.vm.symbol_table.items[name_id],
@@ -211,40 +213,56 @@ fn writerDisplayValue(writer: anytype, t: *Thread, value: Value) !void {
 // TODO
 fn writerWriteValue(writer: anytype, t: *Thread, value: Value) !void {
     switch (value) {
-        .Int => |val| std.fmt.format(writer, "{}", .{val}),
-        .Float => |val| std.fmt.format(writer, "{d}f", .{val}),
+        .Int => |val| try std.fmt.format(writer, "{}", .{val}),
+        .Float => |val| try std.fmt.format(writer, "{d}", .{val}),
         .Char => |val| switch (val) {
-            ' ' => std.fmt.format(writer, "#\\space", .{}),
-            '\n' => std.fmt.format(writer, "#\\newline", .{}),
-            '\t' => std.fmt.format(writer, "#\\tab", .{}),
-            else => std.fmt.format(writer, "#\\{c}", .{val}),
+            ' ' => try std.fmt.format(writer, "#\\space", .{}),
+            '\n' => try std.fmt.format(writer, "#\\newline", .{}),
+            '\t' => try std.fmt.format(writer, "#\\tab", .{}),
+            else => try std.fmt.format(writer, "#\\{c}", .{val}),
         },
         .Boolean => |val| {
             const str = if (val) "#t" else "#f";
-            std.fmt.format(writer, "{s}", .{str});
+            try std.fmt.format(writer, "{s}", .{str});
         },
-        .Sentinel => std.fmt.format(writer, "#sentinel", .{}),
-        .Symbol => |val| std.fmt.format(writer, ":{}", .{t.vm.symbol_table.items[val]}),
-        .Word => |val| std.fmt.format(writer, "{}", .{t.vm.symbol_table.items[val]}),
-        .String => |val| std.fmt.format(writer, "\"{}\"", .{val}),
+        .Sentinel => try std.fmt.format(writer, "#sentinel", .{}),
+        .Symbol => |val| try std.fmt.format(writer, ":{}", .{t.vm.symbol_table.items[val]}),
+        .Word => |val| try std.fmt.format(writer, "{}", .{t.vm.symbol_table.items[val]}),
+        // TODO have to convert escapes in strings
+        .String => |val| try std.fmt.format(writer, "\"{}\"", .{val}),
         .Slice => |slc| {
-            std.fmt.format(writer, "{{ ", .{});
+            try std.fmt.format(writer, "{{ ", .{});
             for (slc) |val| {
-                displayValue(t, val);
-                std.fmt.format(writer, " ", .{});
+                // TODO
+                writerWriteValue(writer, t, val) catch unreachable;
+                try std.fmt.format(writer, " ", .{});
             }
-            std.fmt.format(writer, "}}", .{});
+            try std.fmt.format(writer, "}}", .{});
         },
-        .FFI_Fn => |val| std.fmt.format(writer, "fn({})", .{t.vm.symbol_table.items[val.name]}),
+        .FFI_Fn => |val| try std.fmt.format(writer, "{}", .{t.vm.symbol_table.items[val.name]}),
         .RcPtr => |ptr| {
-            const ty = t.vm.type_table.items[ptr.rc.type_id].ty.Rc;
+            // TODO what to do here
+            const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
             if (ptr.is_weak) {
-                ty.display_weak_fn(t, ptr);
+                try std.fmt.format(writer, "rc@({} {})W", .{
+                    t.vm.symbol_table.items[name_id],
+                    @ptrToInt(ptr.rc.ptr),
+                });
             } else {
-                ty.display_fn(t, ptr);
+                try std.fmt.format(writer, "rc@({} {})", .{
+                    t.vm.symbol_table.items[name_id],
+                    @ptrToInt(ptr.rc.ptr),
+                });
             }
         },
-        .RawPtr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.display_fn(t, ptr),
+        .UnmanagedPtr => |ptr| {
+            // TODO what to do here
+            const name_id = t.vm.type_table.items[ptr.type_id].name_id;
+            try std.fmt.format(writer, "ffi@({} {})", .{
+                t.vm.symbol_table.items[name_id],
+                @ptrToInt(ptr.ptr),
+            });
+        },
     }
 }
 
@@ -281,7 +299,7 @@ pub fn f_parse(t: *Thread) Thread.Error!void {
     // TODO
     // var rc = try ft_quotation.makeRc(t.vm.allocator);
     // try rc.obj.appendSlice(vals);
-    // try t.evaluateValue(.{ .RawPtr = ft_quotation.ffi_type.makePtr(rc.ref()) }, 0);
+    // try t.evaluateValue(.{ .UnmanagedPtr = ft_quotation.ffi_type.makePtr(rc.ref()) }, 0);
 }
 
 // built in types ===
@@ -299,10 +317,10 @@ pub fn f_rc_type_of(t: *Thread) Thread.Error!void {
     t.vm.dropValue(val);
 }
 
-pub fn f_raw_type_of(t: *Thread) Thread.Error!void {
+pub fn f_unmanaged_type_of(t: *Thread) Thread.Error!void {
     const val = try t.stack.pop();
-    if (val != .RawPtr) return error.TypeError;
-    try t.stack.push(.{ .Symbol = t.vm.type_table.items[val.RawPtr.type_id].name_id });
+    if (val != .UnmanagedPtr) return error.TypeError;
+    try t.stack.push(.{ .Symbol = t.vm.type_table.items[val.UnmanagedPtr.type_id].name_id });
     t.vm.dropValue(val);
 }
 
@@ -591,8 +609,8 @@ fn areValuesEqual(a: Value, b: Value) bool {
             ptr.func == b.FFI_Fn.func,
         .RcPtr => |ptr| ptr.rc == b.RcPtr.rc and
             ptr.is_weak == b.RcPtr.is_weak,
-        .RawPtr => |ptr| ptr.type_id == b.RawPtr.type_id and
-            ptr.ptr == b.RawPtr.ptr,
+        .UnmanagedPtr => |ptr| ptr.type_id == b.UnmanagedPtr.type_id and
+            ptr.ptr == b.UnmanagedPtr.ptr,
     } else false;
 }
 
@@ -626,7 +644,7 @@ fn areValuesEquivalent(t: *Thread, a: Value, b: Value) bool {
             break :blk true;
         },
         .RcPtr => |ptr| t.vm.type_table.items[ptr.rc.type_id].ty.Rc.equivalent_fn(t, ptr, b),
-        .RawPtr => |ptr| t.vm.type_table.items[ptr.type_id].ty.FFI.equivalent_fn(t, ptr, b),
+        .UnmanagedPtr => |ptr| t.vm.type_table.items[ptr.type_id].ty.Unmanaged.equivalent_fn(t, ptr, b),
     } else blk: {
         // TODO
         break :blk false;
@@ -1505,6 +1523,19 @@ pub const ft_file = struct {
         t.vm.dropValue(val);
     }
 
+    pub fn _write(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        const val = try t.stack.pop();
+        if (this != .RcPtr) return error.TypeError;
+        if (this.RcPtr.rc.type_id != type_id) return error.TypeError;
+
+        var file = this.RcPtr.rc.cast(File);
+        writerWriteValue(file.file.writer(), t, val) catch unreachable;
+
+        t.vm.dropValue(this);
+        t.vm.dropValue(val);
+    }
+
     pub fn _write_char(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const ch = try t.stack.pop();
@@ -1553,9 +1584,9 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "nop", .func = f_nop },
     .{ .name = "panic", .func = f_panic },
 
-    .{ .name = "stack-len", .func = f_stack_len },
-    .{ .name = "stack-index", .func = f_stack_index },
-    .{ .name = "clear-stack", .func = f_clear_stack },
+    .{ .name = "stack.len", .func = f_stack_len },
+    .{ .name = "stack.index", .func = f_stack_index },
+    .{ .name = "stack.clear!", .func = f_stack_clear },
 
     // .{ .name = ".rstack'", .func = f_print_rstack },
     // .{ .name = ".current'", .func = f_print_current },
@@ -1565,7 +1596,7 @@ pub const builtins = [_]BuiltinDefinition{
 
     .{ .name = "value-type-of", .func = f_value_type_of },
     .{ .name = "rc-type-of", .func = f_rc_type_of },
-    .{ .name = "raw-type-of", .func = f_raw_type_of },
+    .{ .name = "unmanaged-type-of", .func = f_unmanaged_type_of },
     .{ .name = "word>symbol", .func = f_word_to_symbol },
     .{ .name = "symbol>word", .func = f_symbol_to_word },
     .{ .name = "symbol>string", .func = f_symbol_to_string },
@@ -1643,9 +1674,8 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "strlen", .func = ft_string._len },
 
     .{ .name = "<map>", .func = ft_map._make },
-    // TODO make this the default way to mget
-    .{ .name = "mget*", .func = ft_map._get },
     .{ .name = "mset!", .func = ft_map._set },
+    .{ .name = "mget", .func = ft_map._get },
 
     .{ .name = "<file>,open", .func = ft_file._open },
     .{ .name = "<file>,std", .func = ft_file._std },
@@ -1655,6 +1685,7 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "file.read-delimiter", .func = ft_file._read_delimiter },
     .{ .name = "file.read-all", .func = ft_file._read_all },
     .{ .name = "file.display", .func = ft_file._display },
+    .{ .name = "file.write", .func = ft_file._write },
     .{ .name = "file.write-char", .func = ft_file._write_char },
     .{ .name = "file.write-all", .func = ft_file._write_all },
 };

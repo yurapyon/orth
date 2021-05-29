@@ -10,14 +10,14 @@
 ;   cleave
 ;   fold! is well defined like each!
 ;   map iterator
-; rename to stack.index stack.len
+;   rename to stack.index stack.len
 
 { over value-type-of :slice eq? def } :@ #t def
 { #f def } :@value @
 
 <map> :doc-table @
 { doc-table mset! } :doc! @
-{ doc-table mget* "docstring not found" unwrap,default } :doc @
+{ doc-table mget "docstring not found" unwrap,default } :doc @
 
 { over doc! @ } :@doc @
 "( value symbol doc-string -- )\ndefine with a doc string" :@doc doc!
@@ -32,7 +32,7 @@
 @doc
 
 ; TODO
-; { over value-type-of :raw-ptr eq?
+; { over value-type-of :unmanaged-ptr eq?
   ; { over ffi-type-of :record eq?
     ; { over record-type-of :callable eq?
       ; ; what to do here ?
@@ -75,16 +75,15 @@
 "( -- )\ndisplay a newline"
 @doc
 
-{ "TOP| " display 0 stack-index display newline
+{ "TOP| " display 0 stack.index display newline
 } :.
 "( x -- )\ndisplay the top of the stack"
 @doc
 
-; TODO
-{ "STACK| len: " display stack-len display newline
+{ "STACK| len: " display stack.len display newline
   stack.iterator
   { { "    " display display "| " display } keep
-    stack-index display newline }
+    stack.index display newline }
   each!
 } :.stack
 "( -- )\ndisplay the stack"
@@ -272,7 +271,7 @@
 
 ; TODO
 {
-{ dup raw-ptr?
+{ dup unmanaged-ptr?
   { dup record?
     { record-type-of }
     { ffi-type-of }
@@ -296,7 +295,7 @@
 { value-type-of :slice eq? } :slice? @
 { value-type-of :ffi-fn eq? } :ffi-fn? @
 { value-type-of :rc-ptr eq? } :rc-ptr? @
-{ value-type-of :raw-ptr eq? } :raw-ptr? @
+{ value-type-of :unmanaged-ptr eq? } :unmanaged-ptr? @
 
 { dup rc-ptr?
   { rc-type-of :string eq? }
@@ -321,6 +320,12 @@
   { drop #f }
   if
 } :map? @
+
+{ dup rc-ptr?
+  { rc-type-of :file eq? }
+  { drop #f }
+  if
+} :file? @
 
 ; math ==
 
@@ -377,9 +382,6 @@
 { vlen 0 swap
 } :vbounds @
 
-{ mget* drop
-} :mget @
-
 ; TODO write in zig
 { <string>,clone string-append!
 } :string-append @
@@ -431,6 +433,7 @@
 ;   lots of cleanup
 ;   display
 ;   eqv?
+;   use type-info rather than putting display and write in the records themselves
 
 { 0 swap rget } :record-type.type @
 { 1 swap rget } :record-type.name @
@@ -444,7 +447,6 @@
 { 4 swap rset! } :record-type.write-fn! @
 
 5 <record>
-; TODO cleave instead of this
 { { dup downgrade unwrap  swap record-type.type! }
   { :record-type          swap record-type.name! }
   { { :name :field-tags :display-fn :write-fn } swap record-type.field-tags! }
@@ -715,28 +717,25 @@
 
 ;
 
-; TODO rename to seuqunce.iterator
-; slice.iterator
-; etc
 { { 1 swap count } { always } bi*
   zip
-} :sequence-iter
+} :sequence.iterator
 "( len seq -- iter )"
 @doc
 
-{ { slen } keep sequence-iter
+{ { slen } keep sequence.iterator
   { pair>stack sget } map
 } :slice.iterator @
 
-{ { vlen } keep sequence-iter
+{ { vlen } keep sequence.iterator
   { pair>stack vget } map
 } :vec.iterator @
 
-{ { strlen } keep sequence-iter
+{ { strlen } keep sequence.iterator
   { pair>stack strget } map
 } :string.iterator @
 
-{ stack-len { always } { 1 swap count } bi
+{ stack.len { always } { 1 swap count } bi
   zip
   { pair>stack - 1 - } map
 } :stack.iterator @
@@ -763,7 +762,7 @@
   make-callable
 } :compose @
 
-; files ===
+; ports ===
 
 { :data
   :read-char-fn
@@ -787,77 +786,12 @@
 { { input-port.data } { input-port.read-all-fn } bi eval
 } :read-all,p @
 
-{
-:file.read-char ref unwrap
-:file.peek-char ref unwrap
-:file.read-delimiter ref unwrap
-:file.read-all ref unwrap
-make-input-port
-} :<file-input-port> @
-
-{ "r" swap <file>,open
-  { <file-input-port> #t }
-  { #f }
-  if
-} :open-input-file @
-
 { :data
   :display-fn
   :write-fn
   :write-char
   :write-all-fn
 } :output-port @record
-
-{
-:file.display ref unwrap
-#f
-:file.write-char ref unwrap
-:file.write-all ref unwrap
-make-output-port
-} :<file-output-port> @
-
-{ "w" swap <file>,open
-  { <file-output-port> #t }
-  { #f }
-  if
-} :open-output-file @
-
-; display ===
-
-; wont work for primitive types
-; can probably work for slices
-
-<map> :type-info-table @
-{ :display-fn :write-fn } :type-info @record
-
-{ { { 0 swap sget } { 1 swap sget } bi make-type-info } dip
-  type-info-table mset!
-} :@type-info @
-
-{ { { "v[ " swap display,p } keep
-    swap vec.iterator
-    { swap { display,p } keep
-           { " " swap display,p } keep }
-    each!
-    "]" swap display,p }
-  ; TODO
-  #f
-} :vec @type-info
-
-{ { swap string.iterator
-    { swap { display,p } keep }
-    each!
-    drop }
-  ; TODO
-  #f
-} :string @type-info
-
-{ { { "f(" swap display,p } keep
-    { swap file.filepath swap display,p } keep
-    ")" swap display,p }
-  ; TODO
-  #f
-} :file @type-info
 
 { { output-port.data } { output-port.display-fn } bi eval
 } :display,p,unformatted
@@ -876,7 +810,9 @@ make-output-port
         { drop display,p,unformatted }
         { eval }
         if }
-      { over rc-type-of type-info-table mget
+      { over rc-type-of type-info-table
+        ; TODO handle not found
+        mget unwrap
         type-info.display-fn eval }
       if }
     if }
@@ -885,6 +821,123 @@ make-output-port
 } :display,p
 ; ( value port -- )
 @
+
+{ { output-port.data } { output-port.write-fn } bi eval
+} :write,p,unformatted
+; ( value port -- )
+@
+
+; TODO raise type error rather than panic
+{ dup record? { panic } unless
+  dup output-port? { panic } unless
+  over rc-ptr?
+  { over rc-ptr.weak?
+    { write,p,unformatted }
+    { over record?
+      { over record.type record-type.write-fn dup sentinel?
+        ; TODO have a better default way to show records
+        { drop write,p,unformatted }
+        { eval }
+        if }
+      { over rc-type-of type-info-table
+        ; TODO handle not found
+        mget unwrap
+        type-info.write-fn eval }
+      if }
+    if }
+  { write,p,unformatted }
+  if
+} :write,p
+; ( value port -- )
+@
+
+; type info ===
+
+; wont work for primitive types
+; can probably work for slices
+
+<map> :type-info-table @
+{ :display-fn :write-fn } :type-info @record
+
+{ { { 0 swap sget } { 1 swap sget } bi make-type-info } dip
+  type-info-table mset!
+} :@type-info @
+
+{ { { "v[ " swap display,p } keep
+    swap vec.iterator
+    { swap { display,p } keep
+           { " " swap display,p } keep }
+    each!
+    "]" swap display,p }
+  { { "[ " swap display,p } keep
+    swap vec.iterator
+    { swap { write,p } keep
+           { " " swap display,p } keep }
+    each!
+    "]vec" swap display,p }
+} :vec @type-info
+
+{ { swap string.iterator
+    { swap { display,p } keep }
+    each!
+    drop }
+  ; TODO
+  #f
+} :string @type-info
+
+{ { { "f(" swap display,p } keep
+    { swap file.filepath swap display,p } keep
+    ")" swap display,p }
+  ; TODO
+  #f
+} :file @type-info
+
+; string ports ===
+
+{ :string :n } :string-input-port-info @record
+
+{ 0 make-string-input-port-info
+  { dup { string-input-port-info.string strlen } { string-input-port-info.n } bi <=
+    { #f #f }
+    { { { string-input-port-info.n } { string-input-port-info.string } bi strget #t } keep
+      { string-input-port-info.n 1 + } { string-input-port-info.n! } bi }
+    if }
+  { { string-input-port-info.n } { string-input-port-info.string } bi strget }
+  #f
+  ; TODO take substring
+  { string-input-port-info.string }
+  make-input-port
+} :<string-input-port> @
+
+; file ports ===
+
+{
+:file.read-char ref unwrap
+:file.peek-char ref unwrap
+:file.read-delimiter ref unwrap
+:file.read-all ref unwrap
+make-input-port
+} :<file-input-port> @
+
+{ "r" swap <file>,open
+  { <file-input-port> #t }
+  { #f }
+  if
+} :open-input-file @
+
+{
+:file.display ref unwrap
+:file.write ref unwrap
+:file.write-char ref unwrap
+:file.write-all ref unwrap
+make-output-port
+} :<file-output-port> @
+
+{ "w" swap <file>,open
+  { <file-output-port> #t }
+  { #f }
+  if
+} :open-output-file @
 
 :in <file>,std unwrap :stdin-file @
 stdin-file <file-input-port> :stdin @
@@ -896,6 +949,8 @@ stdout-file <file-output-port> :stdout @
 
 { stdout display,p } :display @
 { stdout display,p,unformatted } :display,unformatted @
+{ stdout write,p } :write @
+{ stdout write,p,unformatted } :write,unformatted @
 
 ; TODO
 ; :err <file>,std unwrap :stderr @

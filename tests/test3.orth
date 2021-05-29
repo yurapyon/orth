@@ -1,0 +1,168 @@
+:a :b :c stack.iterator
+{ 2 + stack-index } map
+vcollect! :vec @
+vec
+vec downgrade
+.stack
+
+clear-stack
+
+:a :b :c [ "w" "build.zig" <file>,open ]vec
+.stack
+
+:asdf .
+
+
+{
+
+"todo" open-input-file unwrap
+{ read-line,p } keep
+{ read-line,p } keep
+{ read-line,p } keep
+{ read-line,p } keep
+clear-stack
+
+; "file" open-output-file unwrap
+; {  swap display,p } keep
+
+{ :char :lock } :cell @record
+
+{ { { cell.lock "[" " " ? } dip display,p }
+  { { cell.char }           dip display,p }
+  { { cell.lock "]" " " ? } dip display,p }
+  2tri
+  }
+%cell record-type.display-fn!
+
+{ make-cell } :<cell> @
+
+{ dup pick >=
+  { 3drop }
+  { { { eval } keep } 2dip
+    1 + do-n' }
+  if
+} :do-n' @
+; q do-ct n
+
+{ swap 0 do-n' } :do-n @
+
+{ :data
+  :width
+  :height
+} :field @record
+
+{ 2dup * dup <vec>,capacity swap
+  { { #\. #f <cell> swap vpush! } keep } do-n
+  rot>
+  make-field
+} :<field> @
+
+{ { field.width } { field.data } bi
+  { * + } dip
+  vget
+} :field.get
+; x y field
+@
+
+{ swap rot<
+} :flip
+"( x y z -- z y x )"
+@doc
+
+{ pick field.height pick <=
+  { newline }
+  { pick field.width over <=
+    { newline drop 1 + 0 field.draw' }
+    { 3dup flip field.get display
+      1 + field.draw' }
+    if }
+  if
+} :field.draw'
+; f y x
+@
+
+{ pick field.height pick <=
+  { }
+  { pick field.width over <=
+    { drop 1 + 0 field.draw' }
+    { 3dup flip field.get cell.char opdef-table mget unwrap
+      1 + field.draw' }
+    if }
+  if
+} :field.process!' @
+; f y x
+
+{
+} :field.process! @
+
+{ 0 0 field.draw'
+} :field.draw @
+
+5 4 <field>
+{ display newline } keep
+{ { 0 0 } dip field.get
+  { #\$ swap cell.char! }
+  { #t swap cell.lock! } bi
+  } keep
+{ field.draw } keep
+
+newline
+"hey whats up" display newline
+#\C #f make-cell display newline
+#\F #t make-cell display newline
+
+
+; read-line .stack'
+
+
+
+
+{
+
+{ bi* } :bis @
+
+#\space 32 { char>int } { int>char } bis
+.stack'
+
+; is there a way to define private words this way
+
+{
+  { } :make @
+  { make } :make,v2 @
+  { } :get @
+  { } :set @
+} :&vec @
+
+{ { :rename :make :make-vec }
+  { :prefix :* :v }
+} set-renaming-rules!
+&vec
+clear-renaming-rules!
+
+{ rules ...  }
+:&vec import
+
+{ :a
+  :b
+  :c
+  :d
+  { :e 100 }
+} :thing @enum
+
+{ { { dup thing.a = } { } }
+  { { dup thing.b = } { } }
+  { { dup thing.c = } { } }
+  { { dup thing.d = } { } }
+  { }
+} cond
+
+{ { thing.a { } }
+  { thing.b { } }
+  { thing.c { } }
+  { thing.d { } }
+  { }
+} case
+
+} drop
+
+} drop

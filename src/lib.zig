@@ -42,12 +42,7 @@ const ArrayList = std.ArrayList;
 //     string_indent need to be updated
 //     updare rc strings
 
-// for a vec to print formatted records, zig needs to know aboutrecord type write and display fns
-
 // TODO need
-// type info for primitive rc ffi exposed to orth
-//   %int construct, %vec constuct, etc
-//   need this to i.e. display vecs properly
 // write some tests
 // error reporting
 //   use error_info
@@ -513,7 +508,7 @@ pub const FFI_Fn = struct {
     func: Function,
 };
 
-pub const RawPtr = struct {
+pub const UnmanagedPtr = struct {
     const Self = @This();
 
     pub const Ptr = opaque {};
@@ -538,7 +533,7 @@ pub const Value = union(enum) {
     Slice: []const Value,
     FFI_Fn: FFI_Fn,
     RcPtr: RcPtr,
-    RawPtr: RawPtr,
+    UnmanagedPtr: UnmanagedPtr,
 };
 
 pub const ValueType = @TagType(Value);
@@ -602,28 +597,28 @@ pub const RcType = struct {
     fn defaultFinalize(t: *VM, ptr: RcPtr) void {}
 };
 
-pub const FFI_Type = struct {
-    equivalent_fn: fn (*Thread, RawPtr, Value) bool = defaultEquivalent,
+pub const UnmanagedType = struct {
+    equivalent_fn: fn (*Thread, UnmanagedPtr, Value) bool = defaultEquivalent,
     // TODO can this throw errors
-    dup_fn: fn (*VM, RawPtr) RawPtr = defaultDup,
-    drop_fn: fn (*VM, RawPtr) void = defaultDrop,
+    dup_fn: fn (*VM, UnmanagedPtr) UnmanagedPtr = defaultDup,
+    drop_fn: fn (*VM, UnmanagedPtr) void = defaultDrop,
 
-    fn defaultEquivalent(t: *Thread, ptr: RawPtr, val: Value) bool {
+    fn defaultEquivalent(t: *Thread, ptr: UnmanagedPtr, val: Value) bool {
         return false;
     }
 
-    fn defaultDup(t: *VM, ptr: RawPtr) RawPtr {
+    fn defaultDup(t: *VM, ptr: UnmanagedPtr) UnmanagedPtr {
         return ptr;
     }
 
-    fn defaultDrop(t: *VM, ptr: RawPtr) void {}
+    fn defaultDrop(t: *VM, ptr: UnmanagedPtr) void {}
 };
 
 pub const OrthType = struct {
     pub const Type = union(enum) {
         Primitive,
         Rc: RcType,
-        FFI: FFI_Type,
+        Unmanaged: UnmanagedType,
     };
 
     ty: Type,
@@ -690,7 +685,7 @@ pub const VM = struct {
             .{ .id = .Slice, .name = "slice" },
             .{ .id = .FFI_Fn, .name = "ffi-fn" },
             .{ .id = .RcPtr, .name = "rc-ptr" },
-            .{ .id = .RawPtr, .name = "raw-ptr" },
+            .{ .id = .UnmanagedPtr, .name = "unmanaged-ptr" },
         };
         for (primitive_types) |p| {
             std.debug.assert(@enumToInt(p.id) ==
@@ -837,8 +832,8 @@ pub const VM = struct {
 
                 return val;
             },
-            .RawPtr => |ptr| return .{
-                .RawPtr = self.type_table.items[ptr.type_id].ty.FFI.dup_fn(self, ptr),
+            .UnmanagedPtr => |ptr| return .{
+                .UnmanagedPtr = self.type_table.items[ptr.type_id].ty.Unmanaged.dup_fn(self, ptr),
             },
             else => return val,
         }
@@ -852,8 +847,8 @@ pub const VM = struct {
                     self.allocator.destroy(ptr.rc);
                 }
             },
-            .RawPtr => |ptr| {
-                self.type_table.items[ptr.type_id].ty.FFI.drop_fn(self, ptr);
+            .UnmanagedPtr => |ptr| {
+                self.type_table.items[ptr.type_id].ty.Unmanaged.drop_fn(self, ptr);
             },
             else => {},
         }
