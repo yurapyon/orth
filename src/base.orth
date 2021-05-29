@@ -9,6 +9,8 @@
 ;     pick can probably be done like this too
 ;   cleave
 ;   fold! is well defined like each!
+;   map iterator
+; rename to stack.index stack.len
 
 { over value-type-of :slice eq? def } :@ #t def
 { #f def } :@value @
@@ -78,10 +80,11 @@
 "( x -- )\ndisplay the top of the stack"
 @doc
 
+; TODO
 { "STACK| len: " display stack-len display newline
-  stack-iter
+  stack.iterator
   { { "    " display display "| " display } keep
-    2 + stack-index display newline }
+    stack-index display newline }
   each!
 } :.stack
 "( -- )\ndisplay the stack"
@@ -129,6 +132,11 @@
 
 { swap { swap } dip
 } :rot> @
+
+{ swap rot<
+} :flip
+"( x y z -- z y x )"
+@doc
 
 ; =====
 
@@ -718,20 +726,20 @@
 
 { { slen } keep sequence-iter
   { pair>stack sget } map
-} :slice-iter @
+} :slice.iterator @
 
 { { vlen } keep sequence-iter
   { pair>stack vget } map
-} :vec-iter @
+} :vec.iterator @
 
 { { strlen } keep sequence-iter
   { pair>stack strget } map
-} :string-iter @
+} :string.iterator @
 
 { stack-len { always } { 1 swap count } bi
   zip
   { pair>stack - 1 - } map
-} :stack-iter @
+} :stack.iterator @
 
 ; TODO write this in zig
 { string-iter vcollect!
@@ -770,8 +778,10 @@
 { { input-port.data } { input-port.peek-char-fn } bi eval
 } :peek-char,p @
 
-{ #\newline swap
-  { input-port.data } { input-port.read-delimiter-fn } bi eval
+{ { input-port.data } { input-port.read-delimiter-fn } bi eval
+} :read-delimiter,p @
+
+{ #\newline swap read-delimiter,p
 } :read-line,p @
 
 { { input-port.data } { input-port.read-all-fn } bi eval
@@ -812,6 +822,42 @@ make-output-port
   if
 } :open-output-file @
 
+; display ===
+
+; wont work for primitive types
+
+<map> :type-info-table @
+{ :display-fn :write-fn } :type-info @record
+{ make-type-info } :<type-info> @
+
+{ { "v[ " swap display,p } keep
+  swap vec.iterator
+  { swap { display,p } keep
+         { " " swap display,p } keep }
+  each!
+  "]" swap display,p }
+; TODO
+#f
+<type-info>
+:vec type-info-table mset!
+
+{ swap string.iterator
+  { swap { display,p } keep }
+  each!
+  drop }
+; TODO
+#f
+<type-info>
+:string type-info-table mset!
+
+{ { "f(" swap display,p } keep
+  { swap file.filepath swap display,p } keep
+  ")" swap display,p }
+; TODO
+#f
+<type-info>
+:file type-info-table mset!
+
 { { output-port.data } { output-port.display-fn } bi eval
 } :display,p,unformatted
 ; ( value port -- )
@@ -820,10 +866,15 @@ make-output-port
 ; TODO raise type error rather than panic
 { dup record? { panic } unless
   dup output-port? { panic } unless
-  over record?
-  { over record.type record-type.display-fn dup sentinel?
-    { drop display,p,unformatted }
-    { eval }
+  over rc-ptr?
+  { over record?
+    { over record.type record-type.display-fn dup sentinel?
+      ; TODO have a better default way to show records
+      { drop display,p,unformatted }
+      { eval }
+      if }
+    { over rc-type-of type-info-table mget
+      type-info.display-fn eval }
     if }
   { display,p,unformatted }
   if
