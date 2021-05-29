@@ -1,0 +1,19 @@
+{ 1 5 + } :fn @
+{ 6 5 + fn 100 15 / } :another @
+another
+.stack
+
+"hello" <string-input-port>
+{ read-char,p } keep
+{ read-char,p } keep
+{ read-char,p } keep
+.stack
+
+"hello" write newline
+"hello" display newline
+[ 1 2 3 ]vec write newline
+[ 1 2 3 ]vec display newline
+#\space write newline
+#\space display newline
+
+stdin-file display newline

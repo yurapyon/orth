@@ -23,41 +23,39 @@ usingnamespace lib;
 
 // TODO need
 // move eqv fn for records into orth
-// maybe display takes a boolean to mark wether to display human or machine readable
-//   rather than having display and write
-// value iterator that can iterate over slices
-//   if iterating over a non slice value, just return that value once then return null
-//   for display and write
-// rename record to array ?
-//   could give them a resize fn
-//   could write vecs in orth
-// ports
-//   writep
-//   string, vector port
-//   write an iterator to a port
-// all returns of error.TypeError report what was expected
 // functions
 //   text
 //     string manipulation
+//       substring
 //     string format
-//     printing functions
-//       write
-//         need to translate '\n' in strings to a "\n"
 //   thread exit
 //   math stuff
 //     handle integer overflow
 //       check where it can happen and make it a Thread.Error or change + to +%
-// types
-//   make sure accessing them from within zig is easy
-// short circuiting and and or
-// more ways to print vm info
-//   word table
-// subslice, first rest
-// try using the return stack for eval,restore
-// def vs def_clobber, def doesnt clobber
+//   short circuiting and and or
+//   subslice, first rest
 
 // TODO want
+// def vs def_clobber, def doesnt clobber
+// try using the return stack for eval,restore
+// more ways to print vm info
+//   word table
+// ports
+//   string, vector port
+//   write an iterator to a port
+// all returns of error.TypeError report what was expected
+// dont use zig stack for recursion
+//   zig value iterator that can iterate over slices
+//     if iterating over a non slice value, just return that value once then return null
+//     for display and write
+// rename record to array ?
+//   could give them a resize fn
+//     could write vecs in orth
 // functions
+//   text
+//     printing functions
+//       write
+//         need to translate '\n' in strings to a "\n"
 //   math
 //     fract
 //     dont type check, have separte functions for ints and floats ?
@@ -99,7 +97,7 @@ pub fn f_ref(t: *Thread) Thread.Error!void {
 
 pub fn f_eval(t: *Thread) Thread.Error!void {
     const val = try t.stack.pop();
-    try t.evaluateValue(val, 0);
+    try t.evaluateValue(null, val, 0);
 }
 
 pub fn f_eval_restore(t: *Thread) Thread.Error!void {
@@ -113,13 +111,17 @@ pub fn f_eval_restore(t: *Thread) Thread.Error!void {
     while (i < restore_u) : (i += 1) {
         try t.restore_stack.push(try t.stack.pop());
     }
-    try t.evaluateValue(val, restore_u);
+    try t.evaluateValue(null, val, restore_u);
 }
 
 pub fn f_nop(t: *Thread) Thread.Error!void {}
 
 pub fn f_panic(t: *Thread) Thread.Error!void {
     return error.Panic;
+}
+
+pub fn f_type_error(t: *Thread) Thread.Error!void {
+    return error.TypeError;
 }
 
 pub fn f_stack_len(t: *Thread) Thread.Error!void {
@@ -185,7 +187,7 @@ fn writerDisplayValue(writer: anytype, t: *Thread, value: Value) !void {
             }
             try std.fmt.format(writer, "}}", .{});
         },
-        .FFI_Fn => |val| try std.fmt.format(writer, "fn({})", .{t.vm.symbol_table.items[val.name]}),
+        .FFI_Fn => |val| try std.fmt.format(writer, "fn({})", .{t.vm.symbol_table.items[val.name_id]}),
         .RcPtr => |ptr| {
             const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
             if (ptr.is_weak) {
@@ -210,7 +212,6 @@ fn writerDisplayValue(writer: anytype, t: *Thread, value: Value) !void {
     }
 }
 
-// TODO
 fn writerWriteValue(writer: anytype, t: *Thread, value: Value) !void {
     switch (value) {
         .Int => |val| try std.fmt.format(writer, "{}", .{val}),
@@ -239,7 +240,7 @@ fn writerWriteValue(writer: anytype, t: *Thread, value: Value) !void {
             }
             try std.fmt.format(writer, "}}", .{});
         },
-        .FFI_Fn => |val| try std.fmt.format(writer, "{}", .{t.vm.symbol_table.items[val.name]}),
+        .FFI_Fn => |val| try std.fmt.format(writer, "{}", .{t.vm.symbol_table.items[val.name_id]}),
         .RcPtr => |ptr| {
             // TODO what to do here
             const name_id = t.vm.type_table.items[ptr.rc.type_id].name_id;
@@ -605,7 +606,7 @@ fn areValuesEqual(a: Value, b: Value) bool {
         .Symbol => |val| val == b.Symbol,
         .Slice => |val| val.ptr == b.Slice.ptr and
             val.len == b.Slice.len,
-        .FFI_Fn => |ptr| ptr.name == b.FFI_Fn.name and
+        .FFI_Fn => |ptr| ptr.name_id == b.FFI_Fn.name_id and
             ptr.func == b.FFI_Fn.func,
         .RcPtr => |ptr| ptr.rc == b.RcPtr.rc and
             ptr.is_weak == b.RcPtr.is_weak,
@@ -617,10 +618,9 @@ fn areValuesEqual(a: Value, b: Value) bool {
 pub fn f_equal(t: *Thread) Thread.Error!void {
     const a = try t.stack.pop();
     const b = try t.stack.pop();
-    const are_equal = areValuesEqual(a, b);
+    try t.stack.push(.{ .Boolean = areValuesEqual(a, b) });
     t.vm.dropValue(a);
     t.vm.dropValue(b);
-    try t.stack.push(.{ .Boolean = are_equal });
 }
 
 fn areValuesEquivalent(t: *Thread, a: Value, b: Value) bool {
@@ -635,8 +635,7 @@ fn areValuesEquivalent(t: *Thread, a: Value, b: Value) bool {
         .FFI_Fn,
         => areValuesEqual(a, b),
         .String => |val| std.mem.eql(u8, val, b.String),
-        // TODO do this differently so u dont use the zig stack?
-        // could just use the return stack
+        // TODO dont use the zig stack
         .Slice => |val| blk: {
             for (val) |v, i| {
                 if (!areValuesEquivalent(t, v, b.Slice[i])) break :blk false;
@@ -654,8 +653,7 @@ fn areValuesEquivalent(t: *Thread, a: Value, b: Value) bool {
 pub fn f_equivalent(t: *Thread) Thread.Error!void {
     const a = try t.stack.pop();
     const b = try t.stack.pop();
-    const are_equivalent = areValuesEquivalent(t, a, b);
-    try t.stack.push(.{ .Boolean = are_equivalent });
+    try t.stack.push(.{ .Boolean = areValuesEquivalent(t, a, b) });
     t.vm.dropValue(a);
     t.vm.dropValue(b);
 }
@@ -1093,10 +1091,6 @@ pub const ft_string = struct {
         }
     }
 
-    // TODO should u switch this and other here
-    // "abc" "def" string-append!
-    // "def" "abc" string-append!
-    // { swap string-append! } :++ @
     pub fn _append_in_place(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const other = try t.stack.pop();
@@ -1583,6 +1577,7 @@ pub const builtins = [_]BuiltinDefinition{
 
     .{ .name = "nop", .func = f_nop },
     .{ .name = "panic", .func = f_panic },
+    .{ .name = "type-error", .func = f_type_error },
 
     .{ .name = "stack.len", .func = f_stack_len },
     .{ .name = "stack.index", .func = f_stack_index },

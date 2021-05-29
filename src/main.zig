@@ -35,7 +35,7 @@ pub fn something(allocator: *Allocator) !void {
         vm.word_table.items[idx] = .{
             .value = .{
                 .FFI_Fn = .{
-                    .name = idx,
+                    .name_id = idx,
                     .func = bi.func,
                 },
             },
@@ -95,6 +95,7 @@ pub fn something(allocator: *Allocator) !void {
 
         var t = Thread.init(&vm, values);
         defer t.deinit();
+        // t.no_tco = false;
 
         for (values) |val| {
             // t.nicePrintValue(val);
@@ -106,16 +107,24 @@ pub fn something(allocator: *Allocator) !void {
                 switch (err) {
                     error.WordNotFound => {
                         std.log.warn("word not found: {}", .{t.error_info.word_not_found});
-                        return err;
+                        t.printStackTrace();
+                        return;
+                        // return err;
                     },
                     else => {
                         std.log.warn("err: {}", .{err});
+                        t.printStackTrace();
+                        // return;
                         return err;
                     },
                 }
             };
             if (!running) break;
         }
+
+        std.debug.print("max stack: {}\n", .{t.stack.max});
+        std.debug.print("max ret stack: {}\n", .{t.return_stack.max});
+        std.debug.print("max res stack: {}\n", .{t.restore_stack.max});
     }
 }
 

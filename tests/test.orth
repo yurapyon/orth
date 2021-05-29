@@ -1,9 +1,127 @@
-"hello" <string-input-port>
-{ read-char,p } keep
-{ read-char,p } keep
-{ read-char,p } keep
-.stack
+{ 0 ~ swap << ~
+} :gen-bitmask @
 
-[ 1 2 3 ]vec write newline
-#\space write newline
-#\space display newline
+{ #x1 &
+} :last-bit @
+
+{ { 1 >> } { last-bit } bi
+} :chop-bit @
+
+{ 1 << |
+} :append-bit @
+
+{ #xff &
+} :last-byte @
+
+{ { 8 >> } { last-byte } bi
+} :chop-byte @
+
+{ pick 0 =
+  { 2nip }
+  { { 1 - }
+    { chop-bit }
+    { append-bit }
+    tri,s
+    reverse-bits'
+  }
+  if
+} :reverse-bits' @
+
+{ 0 reverse-bits'
+} :reverse-bits
+"( int-len int -- reversed )"
+@doc
+
+{ over 0 =
+  { 2nip }
+  { over last-bit 1 =
+    { { chop-bit }
+      { 1 >> swap }
+      { append-bit }
+      tri,s
+      bitwise-merge' }
+    { { }
+      { 1 >> }
+      { 1 << }
+      tri,s
+      bitwise-merge' }
+    if
+  }
+  if
+} :bitwise-merge' @
+
+{ { nip integer-length }
+  { 0 bitwise-merge' }
+  2bi
+  reverse-bits
+} :bitwise-merge
+"( value mask -- )"
+@doc
+
+{ pick 0 =
+  { 2nip }
+  { { 1 - }
+    { chop-byte }
+    { { vpush! } keep }
+    tri,s
+    int>bytes' }
+  if
+} :int>bytes' @
+
+{ over <vec>,capacity int>bytes' { vreverse! } keep
+} :int>bytes
+"( n int -- vec )"
+@doc
+
+;;
+
+{ 1 0 ?
+} :boolean>int @
+
+{ 0
+  { { 1 << } { boolean>int } bi,s | }
+  fold!
+} :booleans>int @
+
+{ :base :args } :opdef @record
+
+; TODO fix this
+{ ; spec-string > int
+  { { string.iterator
+      { #\1 eq? } map
+      booleans>int } keep } dip
+
+  ; spec-string arg-order > vec of arguments
+  { always } { string.iterator } bi,s zip
+  { pair>stack
+    { string.iterator } { always } bi,s zip
+    { pair>stack eq? } map
+    booleans>int
+  }
+  map
+  vcollect!
+
+  make-opdef
+} :<opdef>
+"( spec-string arg-order -- )"
+@doc
+
+
+{ { opdef.args vec.iterator zip
+    { pair>stack bitwise-merge } map
+    0 { | } fold!
+    }
+  { opdef.base } bi
+  |
+} :opdef.apply @
+
+;#b01 #b1100 bitwise-merge
+;#b10 #b0011 bitwise-merge
+
+[ #b01 #b10 ]vec vec.iterator
+"0011aabb" "ab" <opdef>
+opdef.apply
+
+#b00110110
+
+.stack

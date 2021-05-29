@@ -1,16 +1,14 @@
-; TODO
-;   add more documentation
-;   @alias
-;     { ref unwrap } dip @
-;   rename bi* bi^ to bis and bia
-;   strcollect!
-;   return stack accessors
-;   over can be written like { dup } dip swap
-;     pick can probably be done like this too
+; TODO need
 ;   cleave
 ;   fold! is well defined like each!
 ;   map iterator
-;   rename to stack.index stack.len
+;     get keys as a vec and iterate over that
+; TODO want
+;   add more documentation
+;   @alias
+;     { ref unwrap } dip @
+;   strcollect!
+;   return stack accessors
 
 { over value-type-of :slice eq? def } :@ #t def
 { #f def } :@value @
@@ -206,35 +204,35 @@
 @doc
 
 { { dip } dip eval
-} :bi*
+} :bi,s
 "( x y p q -- )\napply p to x. then apply q to y"
 @doc
 
 { { 2dip } dip eval
-} :2bi* @
+} :2bi,s @
 
 { { { 2dip } dip dip } dip eval
-} :tri* @
+} :tri,s @
 
-{ { 4dip } 2dip 2bi*
-} :2tri* @
+{ { 4dip } 2dip 2bi,s
+} :2tri,s @
 
-{ dup bi*
-} :bi^ @
+{ dup bi,s
+} :bi,a @
 
-{ dup 2bi*
-} :2bi^ @
+{ dup 2bi,s
+} :2bi,a @
 
-{ dup dup tri*
-} :tri^ @
+{ dup dup tri,s
+} :tri,a @
 
-{ dup dup 2tri*
-} :2tri^ @
+{ dup dup 2tri,s
+} :2tri,a @
 
-{ bi^ and
+{ bi,a and
 } :both? @
 
-{ bi^ or
+{ bi,a or
 } :either? @
 
 ; =====
@@ -345,7 +343,7 @@
 { dup 0 < { neg } when
 } :abs @
 
-{ pick swap over { - } 2bi^
+{ pick swap over { - } 2bi,a
   swap mod +
 } :wrap
 "( min max val -- wrapped )"
@@ -682,7 +680,7 @@
 { make-zipper
   { iterator.obj zipper.should-continue? }
   { dup should-continue?
-    { iterator.obj { zipper.a } { zipper.b } bi { next! } bi^
+    { iterator.obj { zipper.a } { zipper.b } bi { next! } bi,a
       { swap } dip and
       { <pair> #t }
       { 2drop #f #f }
@@ -717,7 +715,7 @@
 
 ;
 
-{ { 1 swap count } { always } bi*
+{ { 1 swap count } { always } bi,s
   zip
 } :sequence.iterator
 "( len seq -- iter )"
@@ -798,9 +796,13 @@
 ; ( value port -- )
 @
 
-; TODO raise type error rather than panic
-{ dup record? { panic } unless
-  dup output-port? { panic } unless
+{ "error: type error\nexpected " display
+  record-type.name display newline
+  type-error
+} :type-error' @
+
+{ dup record? { %output-port type-error' } unless
+  dup output-port? { %output-port type-error' } unless
   over rc-ptr?
   { over rc-ptr.weak?
     { display,p,unformatted }
@@ -859,34 +861,36 @@
 <map> :type-info-table @
 { :display-fn :write-fn } :type-info @record
 
+; TODO construct,slice
 { { { 0 swap sget } { 1 swap sget } bi make-type-info } dip
   type-info-table mset!
 } :@type-info @
 
-{ { { "v[ " swap display,p } keep
+{ { "v[ " over display,p
     swap vec.iterator
-    { swap { display,p } keep
-           { " " swap display,p } keep }
+    { over display,p ", " over display,p }
     each!
     "]" swap display,p }
-  { { "[ " swap display,p } keep
+  { "[ " over display,p
     swap vec.iterator
-    { swap { write,p } keep
-           { " " swap display,p } keep }
+    { over write,p " " over display,p }
     each!
     "]vec" swap display,p }
 } :vec @type-info
 
 { { swap string.iterator
-    { swap { display,p } keep }
+    { over display,p }
     each!
     drop }
-  ; TODO
-  #f
+  { "\"" over display,p
+    swap string.iterator
+    { over display,p }
+    each!
+    "\"" swap display,p }
 } :string @type-info
 
-{ { { "f(" swap display,p } keep
-    { swap file.filepath swap display,p } keep
+{ { "f(" over display,p
+    swap file.filepath over display,p
     ")" swap display,p }
   ; TODO
   #f

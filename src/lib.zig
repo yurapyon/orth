@@ -24,17 +24,16 @@ const ArrayList = std.ArrayList;
 
 // { ... } drop is 'multiline comment'
 
-//;
-
 // envs/libraries are ways of naming units of code and controlling scope
-//   all words are loaded into the word_table and converted to ids anyway
-//   have ways to load new words into the vm from a hashtable
-//     with renaming, excluding
-//     define words into a hashtable linked to the current file youre loading
-//       @env or something
-//   vm word_table is the global lookup table for all words in the session
-// threads can have local environments
-//   you can eval with a new thread, and get then env out of it when its done and move it into global env
+//   slices can current be used to name units of code,
+//     even if any definitions inside just get put in global env
+//   lexically scoped envs
+//     would let u have private scope and import with renaming
+//     local environments for slices can be done and would be a better start to envs than anything else
+//       each slice needs to have locals slots
+//       slice evaluation 'tracks' which envs to use, based on the tree of slices
+//     threads can have local environments
+//       you can eval with a new thread, and get then env out of it when its done and move it into global env
 
 // unicode is currently not supported but i would like to have it in the future
 //   shouldnt be hard
@@ -42,11 +41,17 @@ const ArrayList = std.ArrayList;
 //     string_indent need to be updated
 //     updare rc strings
 
+//;
+
 // TODO need
 // write some tests
+// access records from within zig easily
+// maps can use any type of key
+
+// TODO want
 // error reporting
 //   use error_info
-//   stack trace thing
+//     dont know if i need to
 //   tokenize with col_num and line_num
 //     parse with them too somehow?
 // better number parsing
@@ -56,10 +61,6 @@ const ArrayList = std.ArrayList;
 // intern slices
 // print contents of return stack
 // get rid of sentinel type
-// access records from within zig easily
-// maps can use any type of key
-
-// TODO want
 // use "//" for comments instead of ";" ?
 // prevent invalid symbols
 //   cant be parseable as numbers
@@ -90,10 +91,12 @@ pub fn Stack(comptime T: type) type {
         const Self = @This();
 
         data: ArrayList(T),
+        max: usize,
 
         pub fn init(allocator: *Allocator) Self {
             return .{
                 .data = ArrayList(T).init(allocator),
+                .max = 0,
             };
         }
 
@@ -105,6 +108,7 @@ pub fn Stack(comptime T: type) type {
 
         pub fn push(self: *Self, obj: T) Allocator.Error!void {
             try self.data.append(obj);
+            self.max = std.math.max(self.max, self.data.items.len);
         }
 
         pub fn pop(self: *Self) StackError!T {
@@ -129,6 +133,10 @@ pub fn Stack(comptime T: type) type {
 
         pub fn clear(self: *Self) void {
             self.data.items.len = 0;
+        }
+
+        pub fn resetMax(self: *Self) void {
+            self.max = 0;
         }
     };
 }
@@ -504,7 +512,7 @@ pub const Tokenizer = struct {
 pub const FFI_Fn = struct {
     pub const Function = fn (*Thread) Thread.Error!void;
 
-    name: usize,
+    name_id: usize,
     func: Function,
 };
 
@@ -873,6 +881,14 @@ pub const VM = struct {
     }
 };
 
+pub const Trace = struct {
+    name: ?usize,
+    eval: union(enum) {
+        Slice: []const Value,
+        FFI_Fn: FFI_Fn,
+    },
+};
+
 pub const Thread = struct {
     const Self = @This();
 
@@ -897,10 +913,13 @@ pub const Thread = struct {
 
     current_execution: []const Value,
     restore_ct: usize,
+    no_tco: bool,
 
     stack: Stack(Value),
     return_stack: Stack(ReturnValue),
     restore_stack: Stack(Value),
+
+    trace_stack: Stack(Trace),
 
     pub fn init(vm: *VM, values: []const Value) Self {
         var ret = .{
@@ -909,10 +928,13 @@ pub const Thread = struct {
 
             .current_execution = values,
             .restore_ct = 0,
+            .no_tco = true,
 
             .stack = Stack(Value).init(vm.allocator),
             .return_stack = Stack(ReturnValue).init(vm.allocator),
             .restore_stack = Stack(Value).init(vm.allocator),
+
+            .trace_stack = Stack(Trace).init(vm.allocator),
         };
         return ret;
     }
@@ -927,6 +949,7 @@ pub const Thread = struct {
         for (self.stack.data.items) |val| {
             self.vm.dropValue(val);
         }
+        self.trace_stack.deinit();
         self.restore_stack.deinit();
         self.return_stack.deinit();
         self.stack.deinit();
@@ -934,8 +957,30 @@ pub const Thread = struct {
 
     //;
 
+    pub fn printStackTrace(self: *Self) void {
+        const len = self.trace_stack.data.items.len;
+        for (self.trace_stack.data.items) |trace, i| {
+            std.debug.print("{}: ", .{len - i - 1});
+            if (trace.name) |idx| {
+                var name = self.vm.symbol_table.items[idx];
+                switch (trace.eval) {
+                    .Slice => |s| std.debug.print("slice({})", .{name}),
+                    .FFI_Fn => |fp| std.debug.print("ffi({})", .{name}),
+                }
+            } else {
+                switch (trace.eval) {
+                    .Slice => |s| std.debug.print("anon(slice({}))", .{s}),
+                    .FFI_Fn => |fp| std.debug.print("anon(ffi({}))", .{self.vm.symbol_table.items[fp.name_id]}),
+                }
+            }
+            std.debug.print("\n", .{});
+        }
+    }
+
+    //;
+
     // NOTE: just moves value, does not dup it
-    pub fn evaluateValue(self: *Self, value: Value, restore_ct: usize) Error!void {
+    pub fn evaluateValue(self: *Self, name: ?usize, value: Value, restore_ct: usize) Error!void {
         switch (value) {
             .Word => |idx| {
                 const found_word = self.vm.word_table.items[idx];
@@ -944,7 +989,7 @@ pub const Thread = struct {
                         // found_word can't be a word or this may loop
                         //TODO make a different error for this
                         if (dword.value == .Word) return error.InternalError;
-                        try self.evaluateValue(self.vm.dupValue(dword.value), 0);
+                        try self.evaluateValue(idx, self.vm.dupValue(dword.value), 0);
                     } else {
                         try self.stack.push(self.vm.dupValue(dword.value));
                     }
@@ -954,23 +999,34 @@ pub const Thread = struct {
                 }
             },
             .Slice => |slc| {
-                if (!(self.current_execution.len == 0 and self.restore_ct == 0)) {
+                if (self.no_tco or !(self.current_execution.len == 0 and self.restore_ct == 0)) {
                     try self.return_stack.push(.{
                         .value = .{ .Slice = self.current_execution },
                         .restore_ct = self.restore_ct,
+                    });
+                    try self.trace_stack.push(.{
+                        .name = name,
+                        .eval = .{ .Slice = slc },
                     });
                 }
                 self.current_execution = slc;
                 self.restore_ct = restore_ct;
             },
-            .FFI_Fn => |fp| try fp.func(self),
+            .FFI_Fn => |fp| {
+                try self.trace_stack.push(.{
+                    .name = name,
+                    .eval = .{ .FFI_Fn = fp },
+                });
+                try fp.func(self);
+                _ = try self.trace_stack.pop();
+            },
             else => try self.stack.push(value),
         }
     }
 
     pub fn readValue(self: *Self, value: Value) Error!void {
         switch (value) {
-            .Word => |idx| try self.evaluateValue(value, 0),
+            .Word => |idx| try self.evaluateValue(idx, value, 0),
             else => |val| try self.stack.push(val),
         }
     }
@@ -993,6 +1049,8 @@ pub const Thread = struct {
 
         if (self.return_stack.data.items.len > 0) {
             const rv = self.return_stack.pop() catch unreachable;
+            _ = try self.trace_stack.pop();
+
             if (rv.restore_ct == std.math.maxInt(usize)) {
                 // TODO this can happen with invalid restore count
                 //   or a word leaving things on the return stack
