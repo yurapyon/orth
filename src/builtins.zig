@@ -840,6 +840,29 @@ pub const ft_record = struct {
         });
     }
 
+    pub fn _clone(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        if (this != .RcPtr) return error.TypeError;
+        if (this.RcPtr.rc.type_id != type_id) return error.TypeError;
+
+        var this_data = this.RcPtr.rc.cast(Record);
+
+        var rec = try t.vm.allocator.create(Record);
+        var data = try t.vm.allocator.alloc(Value, @intCast(usize, this_data.len));
+        for (data) |*v, i| {
+            v.* = t.vm.dupValue(this_data.*[i]);
+        }
+        rec.* = data;
+
+        var rc = try Rc.makeOne(t.vm.allocator, type_id, rec);
+        try t.stack.push(.{
+            .RcPtr = .{
+                .rc = rc,
+                .is_weak = false,
+            },
+        });
+    }
+
     pub fn _set(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const idx = try t.stack.pop();
@@ -1645,6 +1668,7 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "upgrade", .func = f_upgrade },
 
     .{ .name = "<record>", .func = ft_record._make },
+    .{ .name = "<record>,clone", .func = ft_record._clone },
     .{ .name = "rset!", .func = ft_record._set },
     .{ .name = "rget", .func = ft_record._get },
 

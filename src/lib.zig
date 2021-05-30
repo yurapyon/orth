@@ -47,11 +47,18 @@ const ArrayList = std.ArrayList;
 // write some tests
 // access records from within zig easily
 // maps can use any type of key
+// threads as an orthtype
+//   cooperative multithreading built into vm ?
+//   modular scheduler thing not part of vm
+//     scheduler can probably be done in orth
+//   yeild and resume
 
 // TODO want
 // error reporting
 //   use error_info
 //     dont know if i need to
+//     could just use the thread's stack
+//       push error info to the stack, crash the thread
 //   tokenize with col_num and line_num
 //     parse with them too somehow?
 // better number parsing
@@ -67,10 +74,6 @@ const ArrayList = std.ArrayList;
 //   cant start with #
 //   symbols can't have spaces
 //     what about string>symbol ?
-// threads as an orthtype
-//   cooperative multithreading built into vm ?
-//   modular scheduler thing not part of vm
-//   yeild and resume
 // parser
 //   could do multiline strings like zig
 //     would make the logic easier
@@ -913,7 +916,7 @@ pub const Thread = struct {
 
     current_execution: []const Value,
     restore_ct: usize,
-    no_tco: bool,
+    enable_tco: bool,
 
     stack: Stack(Value),
     return_stack: Stack(ReturnValue),
@@ -928,7 +931,7 @@ pub const Thread = struct {
 
             .current_execution = values,
             .restore_ct = 0,
-            .no_tco = true,
+            .enable_tco = true,
 
             .stack = Stack(Value).init(vm.allocator),
             .return_stack = Stack(ReturnValue).init(vm.allocator),
@@ -999,7 +1002,7 @@ pub const Thread = struct {
                 }
             },
             .Slice => |slc| {
-                if (self.no_tco or !(self.current_execution.len == 0 and self.restore_ct == 0)) {
+                if (!self.enable_tco or !(self.current_execution.len == 0 and self.restore_ct == 0)) {
                     try self.return_stack.push(.{
                         .value = .{ .Slice = self.current_execution },
                         .restore_ct = self.restore_ct,

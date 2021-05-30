@@ -21,7 +21,7 @@
   { { 1 - }
     { chop-bit }
     { append-bit }
-    tri*
+    tri,s
     reverse-bits'
   }
   if
@@ -38,12 +38,12 @@
     { { chop-bit }
       { 1 >> swap }
       { append-bit }
-      tri*
+      tri,s
       bitwise-merge' }
     { { }
       { 1 >> }
       { 1 << }
-      tri*
+      tri,s
       bitwise-merge' }
     if
   }
@@ -63,7 +63,7 @@
   { { 1 - }
     { chop-byte }
     { { vpush! } keep }
-    tri*
+    tri,s
     int>bytes' }
   if
 } :int>bytes' @
@@ -79,22 +79,23 @@
 } :boolean>int @
 
 { 0
-  { { 1 << } { boolean>int } bi* | }
+  { { 1 << } { boolean>int } bi,s | }
   fold!
 } :booleans>int @
 
-{ :base :args }a :opdef @record
+{ :base :args } :opdef @record
 
 ; TODO fix this
 { ; spec-string > int
-  { { string-iter
+  { { string.iterator
       { #\1 eq? } map
       booleans>int } keep } dip
 
   ; spec-string arg-order > vec of arguments
-  { always } { string-iter } bi* zip
-  { { string-iter } { always } bi* zip
-    { eq? } map
+  { always } { string.iterator } bi,s zip
+  { pair>stack
+    { string.iterator } { always } bi,s zip
+    { pair>stack eq? } map
     booleans>int
   }
   map
@@ -105,22 +106,21 @@
 "( spec-string arg-order -- )"
 @doc
 
-{ { opdef-args vec-iter zip
-    { bitwise-merge } map
+{ { opdef.args vec.iterator zip
+    { pair>stack bitwise-merge } map
     0 { | } fold!
     }
-  { opdef-base } bi
+  { opdef.base } bi
   |
-} :opdef-apply @
+} :opdef.apply @
 
 ;#b01 #b1100 bitwise-merge
 ;#b10 #b0011 bitwise-merge
 
-[ #b01 #b10 ]vec vec-iter
+[ #b01 #b10 ]vec vec.iterator
 "0011aabb" "ab" <opdef>
-opdef-apply
+opdef.apply
 
 #b00110110
 
 .stack
-

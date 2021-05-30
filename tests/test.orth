@@ -1,127 +1,210 @@
-{ 0 ~ swap << ~
-} :gen-bitmask @
-
-{ #x1 &
-} :last-bit @
-
-{ { 1 >> } { last-bit } bi
-} :chop-bit @
-
-{ 1 << |
-} :append-bit @
-
-{ #xff &
-} :last-byte @
-
-{ { 8 >> } { last-byte } bi
-} :chop-byte @
-
-{ pick 0 =
-  { 2nip }
-  { { 1 - }
-    { chop-bit }
-    { append-bit }
-    tri,s
-    reverse-bits'
-  }
+{ dup pick >=
+  { 3drop }
+  { { { eval } keep } 2dip
+    1 + do-times' }
   if
-} :reverse-bits' @
+} :do-times'
+; q do-ct n
+@
 
-{ 0 reverse-bits'
-} :reverse-bits
-"( int-len int -- reversed )"
-@doc
+{ swap 0 do-times'
+} :do-times @
 
-{ over 0 =
-  { 2nip }
-  { over last-bit 1 =
-    { { chop-bit }
-      { 1 >> swap }
-      { append-bit }
-      tri,s
-      bitwise-merge' }
-    { { }
-      { 1 >> }
-      { 1 << }
-      tri,s
-      bitwise-merge' }
+{ dup pick >=
+  { 3drop }
+  { rot> pick
+    { { eval } keep } 2dip
+    1 + do-times,i' }
+  if
+} :do-times,i'
+; q do-ct n
+@
+
+{ swap 0 do-times,i'
+} :do-times,i @
+
+{ { <vec>,capacity } keep
+  { 2dup vpush! } do-times
+  nip
+} :<vec>,fill @
+
+; ===
+
+{ #f 256 <vec>,fill
+} :<char-table> @
+
+{ { char>int } dip vget
+} :char-table.get @
+
+{ { char>int } dip vset!
+} :char-table.set! @
+
+; base 64 ===
+
+"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!?"
+string.iterator vcollect!
+:encode-table @
+
+<char-table>
+:decode-table @
+
+; build decode table
+1 64 count
+encode-table vec.iterator
+zip
+{ pair>stack decode-table char-table.set! }
+each!
+
+{ encode-table vget
+} :encode @
+
+{ decode-table char-table.get
+} :decode @
+
+;
+
+;
+
+{ :char :lock } :cell @record
+
+{ { { cell.lock "[" " " ? } dip display,p }
+  { { cell.char }           dip display,p }
+  { { cell.lock "]" " " ? } dip display,p }
+  2tri
+  }
+%cell record-type.display-fn!
+
+{ make-cell } :<cell> @
+
+;
+
+{ :x :y } :point @record
+
+{ make-point } :<point> @
+
+{ "(" over display,p
+  over point.x over display,p
+  ", " over display,p
+  over point.y over display,p
+  ")" swap display,p
+  drop
+}
+%point record-type.display-fn!
+
+{ 0 0 <point>
+} :<point>,zero @
+
+{ swap over
+  { { point.x + } keep point.x! }
+  { { point.y + } keep point.y! }
+  2bi,s
+} :point.displace! @
+
+{ :data
+  :width
+  :height
+} :field @record
+
+{ 2dup * #f swap <vec>,fill
+  dup vlen
+  { #\. #f <cell> swap pick vset! } do-times,i
+  rot>
+  make-field
+} :<field> @
+
+{ { field.width } { field.data } bi
+  { * + } dip
+  vget
+} :field.get
+; x y field
+@
+
+{ { { point.x } { point.y } bi } dip field.get
+} :field.get,point @
+
+{ field.data vec.iterator
+  { #f swap cell.lock! } each!
+} :field.clear-locks! @
+
+{ pick field.height pick <=
+  { 3drop newline }
+  { pick field.width over <=
+    { newline drop 1 + 0 field.draw' }
+    { 3dup flip field.get display
+      1 + field.draw' }
+    if }
+  if
+} :field.draw'
+; f y x
+@
+
+{ 0 0 field.draw'
+} :field.draw @
+
+; ==
+
+{ :field
+  :opdef-table
+  :at
+} :ctx @record
+
+{ 0 0 <point> make-ctx
+} :<ctx> @
+
+{ { ctx.at } { ctx.field } bi field.get,point
+} :ctx.current-cell @
+
+{ { cell.char } { ctx.opdef-table } bi,s char-table.get
+} :ctx.get-cell-opdef @
+
+{ over cell.lock
+  { 2drop }
+  { swap over ctx.get-cell-opdef eval }
+  if
+} :ctx.process-cell @
+
+{ dup { ctx.at point.y } { ctx.field field.height } bi >=
+  { drop }
+  { dup { ctx.at point.x } { ctx.field field.width } bi >=
+    { dup ctx.at
+      { 0               swap point.x! }
+      { dup point.y 1 + swap point.y! } bi
+      ctx.process!' }
+    { dup { ctx.current-cell } { ctx.process-cell } bi
+      dup ctx.at dup point.x 1 + swap point.x!
+      ctx.process!' }
     if
-  }
-  if
-} :bitwise-merge' @
-
-{ { nip integer-length }
-  { 0 bitwise-merge' }
-  2bi
-  reverse-bits
-} :bitwise-merge
-"( value mask -- )"
-@doc
-
-{ pick 0 =
-  { 2nip }
-  { { 1 - }
-    { chop-byte }
-    { { vpush! } keep }
-    tri,s
-    int>bytes' }
-  if
-} :int>bytes' @
-
-{ over <vec>,capacity int>bytes' { vreverse! } keep
-} :int>bytes
-"( n int -- vec )"
-@doc
-
-;;
-
-{ 1 0 ?
-} :boolean>int @
-
-{ 0
-  { { 1 << } { boolean>int } bi,s | }
-  fold!
-} :booleans>int @
-
-{ :base :args } :opdef @record
-
-; TODO fix this
-{ ; spec-string > int
-  { { string.iterator
-      { #\1 eq? } map
-      booleans>int } keep } dip
-
-  ; spec-string arg-order > vec of arguments
-  { always } { string.iterator } bi,s zip
-  { pair>stack
-    { string.iterator } { always } bi,s zip
-    { pair>stack eq? } map
-    booleans>int
-  }
-  map
-  vcollect!
-
-  make-opdef
-} :<opdef>
-"( spec-string arg-order -- )"
-@doc
-
-
-{ { opdef.args vec.iterator zip
-    { pair>stack bitwise-merge } map
-    0 { | } fold!
     }
-  { opdef.base } bi
-  |
-} :opdef.apply @
+  if
+} :ctx.process!' @
 
-;#b01 #b1100 bitwise-merge
-;#b10 #b0011 bitwise-merge
+{ { ctx.field field.clear-locks! }
+  { ctx.process!' }
+  bi
+} :ctx.process! @
 
-[ #b01 #b10 ]vec vec.iterator
-"0011aabb" "ab" <opdef>
-opdef.apply
+5 4 <field> :f @
 
-#b00110110
+0 0 f field.get
+#\$ swap cell.char!
+; { #t swap cell.lock! } bi
 
-.stack
+0 1 f field.get
+#\* swap cell.char!
+; { #f swap cell.lock! } bi
+
+f field.draw
+
+<char-table> :opds @
+{ drop } #\. opds char-table.set!
+{ ctx.at display newline } #\$ opds char-table.set!
+{ ctx.current-cell
+  { #\. swap cell.char! }
+  { #t swap cell.lock! } bi
+} #\* opds char-table.set!
+
+f opds <ctx> :ctx @
+
+ctx display newline
+ctx ctx.process!
+f field.draw
