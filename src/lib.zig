@@ -52,6 +52,8 @@ const ArrayList = std.ArrayList;
 //   modular scheduler thing not part of vm
 //     scheduler can probably be done in orth
 //   yeild and resume
+// make #t #f and #sentinel syntax
+//   all words that start with # are builtin
 
 // TODO want
 // error reporting
@@ -565,9 +567,8 @@ pub const Rc = struct {
         rc.* = .{
             .type_id = type_id,
             .ptr = @ptrCast(*Ptr, ptr),
-            .ref_ct = 0,
+            .ref_ct = 1,
         };
-        rc.inc();
         return rc;
     }
 
@@ -594,9 +595,6 @@ pub const RcPtr = struct {
     is_weak: bool,
 };
 
-// TODO if i want any of these to take a writer,
-//   these fn ptrs cant take 'writer: anytype'
-//     and need to be specialized based on what port types are available
 pub const RcType = struct {
     equivalent_fn: fn (*Thread, RcPtr, Value) bool = defaultEquivalent,
     finalize_fn: fn (*VM, RcPtr) void = defaultFinalize,

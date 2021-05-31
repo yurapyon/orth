@@ -1,5 +1,5 @@
 ; TODO need
-;   cleave
+;   cleave spread apply
 ;   fold! is well defined like each!
 ;   map iterator
 ;     get keys as a vec and iterate over that
@@ -22,7 +22,7 @@
 
 { { symbol>string display } keep
   ": " display
-  ; todo ref display should be ref write
+  ; TODO ref display should be ref write
   { ref drop display } keep newline
   doc display newline
 } :.doc
@@ -388,7 +388,10 @@
 
 #sentinel :[ @
 
-{ over #sentinel eq? { nip } { { vpush! } keep ]vec' } if
+{ over #sentinel eq?
+  { nip }
+  { { vpush! } keep ]vec' }
+  if
 } :]vec' @
 
 { <vec> ]vec' { vreverse! } keep
@@ -396,7 +399,10 @@
 "( #sentinel ... a b c -- vec )"
 @doc
 
-{ over #sentinel eq? { nip } { { { swap } dip mset! } keep ]map' } if
+{ over #sentinel eq?
+  { nip }
+  { { { swap } dip mset! } keep ]map' }
+  if
 } :]map' @
 
 { <map> ]map'
@@ -428,8 +434,7 @@
 
 ; TODO
 ;   autogenerate docstrings
-;   lots of cleanup
-;   display
+;   type check accessor arguments ?
 ;   eqv?
 ;   use type-info rather than putting display and write in the records themselves
 
@@ -737,10 +742,6 @@
   zip
   { pair>stack - 1 - } map
 } :stack.iterator @
-
-; TODO write this in zig
-{ string-iter vcollect!
-} :string>vec @
 
 ; =====
 

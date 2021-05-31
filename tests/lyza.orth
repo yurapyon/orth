@@ -42,25 +42,26 @@
 ; base 64 ===
 
 "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!?"
-string>vec
+string.iterator vcollect!
 :encode-table @
 
-<char-table> :decode-table @
+<char-table>
+:decode-table @
 
-{ 1 64 count
-  encode-table vec.iterator
-  zip
-  { pair>stack decode-table char-table.set! }
-  each!
-} :decode-table.init! @
-
-decode-table.init!
+; build decode table
+1 64 count
+encode-table vec.iterator
+zip
+{ pair>stack decode-table char-table.set! }
+each!
 
 { encode-table vget
 } :encode @
 
 { decode-table char-table.get
 } :decode @
+
+;
 
 ;
 
@@ -134,15 +135,8 @@ decode-table.init!
 { { { point.x } { point.y } bi } dip field.get
 } :field.get,point @
 
-{ dup pick vlen >=
-  { 2drop }
-  { 2dup swap vget
-    #f swap cell.lock!
-    1 + field.clear-locks!' }
-  if
-} :field.clear-locks!' @
-
-{ field.data 0 field.clear-locks!'
+{ field.data vec.iterator
+  { #f swap cell.lock! } each!
 } :field.clear-locks! @
 
 { { { { 0 >= } both? } 2keep } dip
@@ -211,13 +205,13 @@ decode-table.init!
   ctx.process!'
 } :ctx.process! @
 
-10 10 <field> :f @
-
-; 0 0 f field.get
-; #\* swap cell.char!
-; { #t swap cell.lock! } bi
+5 4 <field> :f @
 
 0 0 f field.get
+#\* swap cell.char!
+; { #t swap cell.lock! } bi
+
+0 1 f field.get
 #\S swap cell.char!
 ; { #f swap cell.lock! } bi
 
@@ -259,9 +253,12 @@ decode-table.init!
 
 f opds <ctx> :ctx @
 
+{ drop } :field.draw @
+
+ctx display newline
+
 f field.draw
-3 {
+10 {
 ctx ctx.process!
 f field.draw
 } do-times
-; f field.draw

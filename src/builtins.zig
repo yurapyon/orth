@@ -1052,6 +1052,7 @@ pub const ft_string = struct {
     pub fn finalize(vm: *VM, ptr: RcPtr) void {
         var string = ptr.rc.cast(String);
         string.deinit();
+        vm.allocator.destroy(string);
     }
 
     //;
@@ -1167,6 +1168,36 @@ pub const ft_string = struct {
         };
 
         try t.stack.push(.{ .Symbol = try t.vm.internSymbol(str) });
+
+        t.vm.dropValue(this);
+    }
+
+    pub fn _to_vec(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        switch (this) {
+            .String => {},
+            .RcPtr => |ptr| if (ptr.rc.type_id != type_id) return error.TypeError,
+            else => return error.TypeError,
+        }
+
+        const str = switch (this) {
+            .String => |str| str,
+            .RcPtr => |ptr| ptr.rc.cast(String).items,
+            else => unreachable,
+        };
+
+        var vec = try t.vm.allocator.create(ft_vec.Vec);
+        vec.* = try ft_vec.Vec.initCapacity(t.vm.allocator, str.len);
+        for (str) |ch| {
+            vec.append(.{ .Char = ch }) catch unreachable;
+        }
+        var rc = try Rc.makeOne(t.vm.allocator, ft_vec.type_id, vec);
+        try t.stack.push(.{
+            .RcPtr = .{
+                .rc = rc,
+                .is_weak = false,
+            },
+        });
 
         t.vm.dropValue(this);
     }
@@ -1687,8 +1718,7 @@ pub const builtins = [_]BuiltinDefinition{
     .{ .name = "<string>,clone", .func = ft_string._clone },
     .{ .name = "string-append!", .func = ft_string._append_in_place },
     .{ .name = "string>symbol", .func = ft_string._to_symbol },
-    // TODO
-    // .{ .name = "string>vec", .func = ft_string._to_vec },
+    .{ .name = "string>vec", .func = ft_string._to_vec },
     .{ .name = "strget", .func = ft_string._get },
     .{ .name = "strlen", .func = ft_string._len },
 

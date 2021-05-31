@@ -14,6 +14,19 @@ pub fn readFile(allocator: *Allocator, filename: []const u8) ![]u8 {
 }
 
 pub fn something(allocator: *Allocator) !void {
+    var to_load: ?[:0]u8 = null;
+    var i: usize = 0;
+    var args = std.process.args();
+    while (args.next(allocator)) |arg_err| {
+        const arg = try arg_err;
+        if (i == 1) {
+            to_load = arg;
+        } else {
+            allocator.free(arg);
+        }
+        i += 1;
+    }
+
     var vm = try VM.init(allocator);
     defer vm.deinit();
 
@@ -78,8 +91,8 @@ pub fn something(allocator: *Allocator) !void {
         }) {}
     }
 
-    {
-        var f = try readFile(allocator, "tests/test.orth");
+    if (to_load) |l| {
+        var f = try readFile(allocator, l);
         defer allocator.free(f);
 
         var tk = Tokenizer.init(f);
@@ -95,7 +108,7 @@ pub fn something(allocator: *Allocator) !void {
 
         var t = Thread.init(&vm, values);
         defer t.deinit();
-        // t.no_tco = false;
+        // t.enable_tco = false;
 
         for (values) |val| {
             // t.nicePrintValue(val);
@@ -122,9 +135,13 @@ pub fn something(allocator: *Allocator) !void {
             if (!running) break;
         }
 
-        std.debug.print("max stack: {}\n", .{t.stack.max});
-        std.debug.print("max ret stack: {}\n", .{t.return_stack.max});
-        std.debug.print("max res stack: {}\n", .{t.restore_stack.max});
+        // std.debug.print("max stack: {}\n", .{t.stack.max});
+        // std.debug.print("max ret stack: {}\n", .{t.return_stack.max});
+        // std.debug.print("max res stack: {}\n", .{t.restore_stack.max});
+    }
+
+    if (to_load) |l| {
+        allocator.free(l);
     }
 }
 
