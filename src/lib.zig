@@ -4,6 +4,10 @@ const ArrayList = std.ArrayList;
 
 //;
 
+const builtins = @import("builtins.zig");
+
+//;
+
 // stack 0 is top
 
 // once you parse something to values
@@ -636,6 +640,8 @@ pub const OrthType = struct {
 
 //;
 
+pub const orth_base = @embedFile("base.orth");
+
 pub const ReturnValue = struct {
     value: Value,
     restore_ct: usize,
@@ -649,12 +655,7 @@ pub const DefinedWord = struct {
 pub const VM = struct {
     const Self = @This();
 
-    pub const ErrorInfo = struct {
-        word_not_found: []const u8,
-    };
-
     allocator: *Allocator,
-    error_info: ErrorInfo,
 
     symbol_table: ArrayList([]const u8),
     word_table: ArrayList(?DefinedWord),
@@ -669,7 +670,6 @@ pub const VM = struct {
     pub fn init(allocator: *Allocator) Allocator.Error!Self {
         var ret = Self{
             .allocator = allocator,
-            .error_info = undefined,
 
             .symbol_table = ArrayList([]const u8).init(allocator),
             .word_table = ArrayList(?DefinedWord).init(allocator),
@@ -733,6 +733,70 @@ pub const VM = struct {
             self.allocator.free(sym);
         }
         self.symbol_table.deinit();
+    }
+
+    //;
+
+    pub fn installBaseLib(self: *Self) Allocator.Error!void {
+        try self.defineWord("#t", .{
+            .value = .{ .Boolean = true },
+            .eval_on_lookup = false,
+        });
+        try self.defineWord("#f", .{
+            .value = .{ .Boolean = false },
+            .eval_on_lookup = false,
+        });
+        try self.defineWord("#sentinel", .{
+            .value = .{ .Sentinel = {} },
+            .eval_on_lookup = false,
+        });
+
+        for (builtins.builtins) |bi| {
+            const idx = try self.internSymbol(bi.name);
+            self.word_table.items[idx] = .{
+                .value = .{
+                    .FFI_Fn = .{
+                        .name_id = idx,
+                        .func = bi.func,
+                    },
+                },
+                .eval_on_lookup = true,
+            };
+        }
+
+        try builtins.ft_record.install(self);
+        try builtins.ft_vec.install(self);
+        try builtins.ft_string.install(self);
+        try builtins.ft_map.install(self);
+        try builtins.ft_file.install(self);
+
+        var t = self.loadString(orth_base) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            // TODO print errors
+            else => unreachable,
+        };
+        defer t.deinit();
+
+        while (t.step() catch |err| {
+            switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                // TODO print errors
+                else => unreachable,
+            }
+        }) {}
+    }
+
+    pub fn loadString(self: *Self, str: []const u8) (Allocator.Error || Tokenizer.Error)!Thread {
+        var tk = Tokenizer.init(str);
+        var tokens = std.ArrayList(Token).init(self.allocator);
+        defer tokens.deinit();
+
+        while (try tk.next()) |tok| {
+            try tokens.append(tok);
+        }
+
+        const values = try self.parse(tokens.items);
+        return Thread.init(self, values);
     }
 
     // parse ===
@@ -865,6 +929,14 @@ pub const VM = struct {
 
     //;
 
+    pub fn lookupDefinedWord(self: *Self, id: usize) ?*DefinedWord {
+        if (self.word_table.items[id]) |*dword| {
+            return dword;
+        } else {
+            return null;
+        }
+    }
+
     // TODO check types dont have same name?
     // returns type id
     pub fn installType(self: *Self, name: []const u8, ty: OrthType) Allocator.Error!usize {
@@ -912,6 +984,7 @@ pub const Thread = struct {
     vm: *VM,
     error_info: ErrorInfo,
 
+    code: []Value,
     current_execution: []const Value,
     restore_ct: usize,
     enable_tco: bool,
@@ -922,11 +995,16 @@ pub const Thread = struct {
 
     trace_stack: Stack(Trace),
 
-    pub fn init(vm: *VM, values: []const Value) Self {
+    // TODO takes ownership of values
+    //        frees using the vm allocator
+    //        is that right?
+    //      only way to make threads in the api might be from vm so it might be fine
+    pub fn init(vm: *VM, values: []Value) Self {
         var ret = .{
             .vm = vm,
             .error_info = undefined,
 
+            .code = values,
             .current_execution = values,
             .restore_ct = 0,
             .enable_tco = true,
@@ -954,6 +1032,7 @@ pub const Thread = struct {
         self.restore_stack.deinit();
         self.return_stack.deinit();
         self.stack.deinit();
+        self.vm.allocator.free(self.code);
     }
 
     //;

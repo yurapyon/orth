@@ -1,0 +1,7 @@
+[ 1 2 3 ]vec
+.stack
+dup vpop!
+.stack
+
+{ :a :b } :rec @record
+%rec construct display newline

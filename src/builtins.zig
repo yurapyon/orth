@@ -978,6 +978,20 @@ pub const ft_vec = struct {
         t.vm.dropValue(this);
     }
 
+    pub fn _pop(t: *Thread) Thread.Error!void {
+        const this = try t.stack.pop();
+        if (this != .RcPtr) return error.TypeError;
+        if (this.RcPtr.rc.type_id != type_id) return error.TypeError;
+
+        var vec = this.RcPtr.rc.cast(Vec);
+        // TODO error if vec.items.len == 0
+        const popped = vec.items[vec.items.len - 1];
+        vec.items.len -= 1;
+        try t.stack.push(popped);
+
+        t.vm.dropValue(this);
+    }
+
     pub fn _set(t: *Thread) Thread.Error!void {
         const this = try t.stack.pop();
         const idx = try t.stack.pop();
@@ -1709,6 +1723,7 @@ pub const builtins = [_]BuiltinDefinition{
     // TODO
     // .{ .name = "vec>string", .func = ft_vec._to_string },
     .{ .name = "vpush!", .func = ft_vec._push },
+    .{ .name = "vpop!", .func = ft_vec._pop },
     .{ .name = "vset!", .func = ft_vec._set },
     .{ .name = "vget", .func = ft_vec._get },
     .{ .name = "vlen", .func = ft_vec._len },

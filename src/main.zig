@@ -30,115 +30,40 @@ pub fn something(allocator: *Allocator) !void {
     var vm = try VM.init(allocator);
     defer vm.deinit();
 
-    try vm.defineWord("#t", .{
-        .value = .{ .Boolean = true },
-        .eval_on_lookup = false,
-    });
-    try vm.defineWord("#f", .{
-        .value = .{ .Boolean = false },
-        .eval_on_lookup = false,
-    });
-    try vm.defineWord("#sentinel", .{
-        .value = .{ .Sentinel = {} },
-        .eval_on_lookup = false,
-    });
+    try vm.installBaseLib();
 
-    for (builtins.builtins) |bi| {
-        const idx = try vm.internSymbol(bi.name);
-        vm.word_table.items[idx] = .{
-            .value = .{
-                .FFI_Fn = .{
-                    .name_id = idx,
-                    .func = bi.func,
-                },
-            },
-            .eval_on_lookup = true,
-        };
-    }
+    //;
 
-    try builtins.ft_record.install(&vm);
-    try builtins.ft_vec.install(&vm);
-    try builtins.ft_string.install(&vm);
-    try builtins.ft_map.install(&vm);
-    try builtins.ft_file.install(&vm);
+    var f = try readFile(allocator, to_load orelse "tests/test.orth");
+    defer allocator.free(f);
 
-    {
-        var f = try readFile(allocator, "src/base.orth");
-        defer allocator.free(f);
+    var t = try vm.loadString(f);
+    defer t.deinit();
+    // t.enable_tco = false;
 
-        var tk = Tokenizer.init(f);
-        var tokens = std.ArrayList(Token).init(vm.allocator);
-        defer tokens.deinit();
-
-        while (try tk.next()) |tok| {
-            try tokens.append(tok);
-        }
-
-        const values = try vm.parse(tokens.items);
-        defer vm.allocator.free(values);
-
-        var t = Thread.init(&vm, values);
-        defer t.deinit();
-
-        while (t.step() catch |err| {
+    while (true) {
+        var running = t.step() catch |err| {
             switch (err) {
                 error.WordNotFound => {
                     std.log.warn("word not found: {}", .{t.error_info.word_not_found});
+                    t.printStackTrace();
+                    return;
+                    // return err;
+                },
+                else => {
+                    std.log.warn("err: {}", .{err});
+                    t.printStackTrace();
+                    // return;
                     return err;
                 },
-                else => return err,
             }
-        }) {}
+        };
+        if (!running) break;
     }
 
-    if (to_load) |l| {
-        var f = try readFile(allocator, l);
-        defer allocator.free(f);
-
-        var tk = Tokenizer.init(f);
-        var tokens = std.ArrayList(Token).init(vm.allocator);
-        defer tokens.deinit();
-
-        while (try tk.next()) |tok| {
-            try tokens.append(tok);
-        }
-
-        const values = try vm.parse(tokens.items);
-        defer vm.allocator.free(values);
-
-        var t = Thread.init(&vm, values);
-        defer t.deinit();
-        // t.enable_tco = false;
-
-        for (values) |val| {
-            // t.nicePrintValue(val);
-            // std.debug.print("\n", .{});
-        }
-
-        while (true) {
-            var running = t.step() catch |err| {
-                switch (err) {
-                    error.WordNotFound => {
-                        std.log.warn("word not found: {}", .{t.error_info.word_not_found});
-                        t.printStackTrace();
-                        return;
-                        // return err;
-                    },
-                    else => {
-                        std.log.warn("err: {}", .{err});
-                        t.printStackTrace();
-                        // return;
-                        return err;
-                    },
-                }
-            };
-            if (!running) break;
-        }
-
-        // std.debug.print("max stack: {}\n", .{t.stack.max});
-        // std.debug.print("max ret stack: {}\n", .{t.return_stack.max});
-        // std.debug.print("max res stack: {}\n", .{t.restore_stack.max});
-    }
+    // std.debug.print("max stack: {}\n", .{t.stack.max});
+    // std.debug.print("max ret stack: {}\n", .{t.return_stack.max});
+    // std.debug.print("max res stack: {}\n", .{t.restore_stack.max});
 
     if (to_load) |l| {
         allocator.free(l);

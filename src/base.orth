@@ -12,6 +12,7 @@
 
 { over value-type-of :slice eq? def } :@ #t def
 { #f def } :@value @
+:@ ref drop :set! @
 
 <map> :doc-table @
 { doc-table mset! } :doc! @
@@ -486,6 +487,9 @@
   0 construct'
 } :construct @
 
+{ 0 construct' drop
+} :record.update! @
+
 ; { record.type eq?
 ; } :is? @
 
@@ -808,9 +812,12 @@
   { over rc-ptr.weak?
     { display,p,unformatted }
     { over record?
+      ; TODO use an optional here
       { over record.type record-type.display-fn dup sentinel?
         ; TODO have a better default way to show records
-        { drop display,p,unformatted }
+        { drop "r<" over display,p
+          over record.type record-type.name over display,p
+          ">" swap display,p drop }
         { eval }
         if }
       { over rc-type-of type-info-table
